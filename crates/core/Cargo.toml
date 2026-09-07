@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+image.workspace = true
+jwalk.workspace = true
+lofty.workspace = true
+rayon.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
 blake3.workspace = true

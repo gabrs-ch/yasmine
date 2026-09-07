@@ -35,6 +35,9 @@ pub enum Error {
     #[error("erro de sqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
+    #[error("erro de e/s: {0}")]
+    Io(#[from] std::io::Error),
+
     /// Downgrade do app com índice novo. Melhor recusar do que corromper.
     #[error(
         "o índice foi criado por uma versão mais nova do player \

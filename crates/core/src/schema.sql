@@ -36,7 +36,7 @@ CREATE TABLE artist (
 -- Capa deduplicada pelo hash do blob embutido. A mesma arte se repete em toda
 -- faixa do álbum: sem dedupe são ~15 GB numa biblioteca de 50k, com dedupe são
 -- ~3k álbuns. Os bytes NÃO ficam no DB — miniaturas prontas vão pro cache em
--- disco, em <cache>/art/<hex[0..2]>/<hex>_{96,512}.webp. Original nunca entra
+-- disco, em <cache>/art/<hex[0..2]>/<hex>_{96,512}.jpg. Original nunca entra
 -- na RAM.
 CREATE TABLE cover_art (
     id        INTEGER PRIMARY KEY,
