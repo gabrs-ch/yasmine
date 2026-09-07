@@ -16,6 +16,7 @@
 mod png;
 mod rng;
 
+use std::collections::HashSet;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -133,6 +134,26 @@ struct AlbumPlan {
     titles: Vec<String>,
 }
 
+/// Garante que `base` não colida com nada já usado, sufixando se preciso.
+///
+/// Sem isso o corpus fica silenciosamente menor do que o pedido: o pool de
+/// nomes é pequeno, dois artistas sorteiam o mesmo nome, caem no mesmo
+/// diretório e as faixas de mesmo número se sobrescrevem. Contar 50 000
+/// escritas e encontrar 49 978 arquivos estraga qualquer medição.
+fn unique(used: &mut HashSet<String>, base: String) -> String {
+    if used.insert(base.clone()) {
+        return base;
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{base} {n}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 /// Monta a biblioteca inteira em memória antes de escrever nada.
 ///
 /// Custa alguns MB e paga: o plano é determinístico e independente de quantas
@@ -141,9 +162,12 @@ fn plan(tracks: usize, seed: u64, art_px: u32) -> Vec<AlbumPlan> {
     let mut rng = Rng::new(seed);
     let mut albums = Vec::new();
     let mut remaining = tracks;
+    let mut used_artists = HashSet::new();
 
     while remaining > 0 {
-        let artist = two_words(&mut rng);
+        let artist = unique(&mut used_artists, sanitize(&two_words(&mut rng)));
+        let mut used_albums = HashSet::new();
+
         // Um artista com vários álbuns é o normal, e é o que faz a árvore de
         // diretórios ter a forma de uma biblioteca de verdade.
         for _ in 0..rng.range(1, 4) {
@@ -154,8 +178,8 @@ fn plan(tracks: usize, seed: u64, art_px: u32) -> Vec<AlbumPlan> {
             remaining -= n;
 
             albums.push(AlbumPlan {
-                artist: sanitize(&artist),
-                album: sanitize(&two_words(&mut rng)),
+                artist: artist.clone(),
+                album: unique(&mut used_albums, sanitize(&two_words(&mut rng))),
                 genre: rng.pick(GENRE),
                 year: 1970 + rng.below(55) as u32,
                 art: png::cover(art_px, rng.next_u64()),
@@ -373,6 +397,22 @@ mod tests {
     fn plano_entrega_o_numero_pedido_de_faixas() {
         let total: usize = plan(1234, 3, 16).iter().map(|a| a.titles.len()).sum();
         assert_eq!(total, 1234);
+    }
+
+    /// Cada `(artista, álbum)` vira um diretório. Dois planos no mesmo
+    /// diretório significam faixas sobrescritas e corpus menor que o pedido.
+    #[test]
+    fn nenhum_par_artista_album_se_repete() {
+        let albums = plan(50_000, 1, 8);
+        let mut seen = HashSet::new();
+        for a in &albums {
+            assert!(
+                seen.insert((a.artist.clone(), a.album.clone())),
+                "diretório duplicado: {}/{}",
+                a.artist,
+                a.album
+            );
+        }
     }
 
     #[test]
