@@ -1,0 +1,17 @@
+[package]
+name = "libgen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "libgen"
+path = "src/main.rs"
+
+[dependencies]
+lofty.workspace = true
+
+[lints]
+workspace = true

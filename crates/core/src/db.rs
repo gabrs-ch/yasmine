@@ -1,0 +1,170 @@
+//! Abertura, PRAGMAs e migração do índice.
+
+use std::path::Path;
+
+use rusqlite::Connection;
+
+/// Versão do schema gravada em `PRAGMA user_version`.
+pub const SCHEMA_VERSION: i32 = 1;
+
+const SCHEMA_SQL: &str = include_str!("schema.sql");
+
+/// PRAGMAs de conexão. Todos são decisões de performance, nenhum é opção do
+/// usuário.
+///
+/// - `WAL`: leitura não bloqueia escrita. A UI consulta enquanto o scanner
+///   grava, sem travar a lista.
+/// - `synchronous = NORMAL`: sob WAL isso só abre mão de durabilidade se a
+///   *máquina* cair no meio de um commit — e o pior caso é reescanear. Vale o
+///   fsync a menos por transação num scan de 50k faixas.
+/// - `mmap_size = 256 MB`: lê páginas direto do page cache do SO, sem copiar
+///   pro buffer do SQLite.
+/// - `cache_size = -16000`: 16 MB (o sinal negativo é KiB, não páginas).
+const PRAGMAS: &str = "
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous  = NORMAL;
+    PRAGMA foreign_keys = ON;
+    PRAGMA temp_store   = MEMORY;
+    PRAGMA mmap_size    = 268435456;
+    PRAGMA cache_size   = -16000;
+    PRAGMA busy_timeout = 5000;
+";
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("erro de sqlite: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+
+    /// Downgrade do app com índice novo. Melhor recusar do que corromper.
+    #[error(
+        "o índice foi criado por uma versão mais nova do player \
+         (schema v{found}, esta versão entende até v{supported})"
+    )]
+    SchemaTooNew { found: i32, supported: i32 },
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// O índice da biblioteca.
+///
+/// Uma única conexão. Vale o lembrete pro Android: o Rust é o **único**
+/// escritor deste arquivo — o Kotlin consulta via FFI, nunca abre o SQLite
+/// direto. Dois escritores no mesmo arquivo dá corrupção difícil de rastrear.
+#[derive(Debug)]
+pub struct Db {
+    conn: Connection,
+}
+
+impl Db {
+    /// Abre (criando se preciso) o índice em `path` e aplica as migrações.
+    pub fn open(path: &Path) -> Result<Self> {
+        Self::from_conn(Connection::open(path)?)
+    }
+
+    /// Índice efêmero — testes e benchmarks.
+    pub fn open_in_memory() -> Result<Self> {
+        Self::from_conn(Connection::open_in_memory()?)
+    }
+
+    fn from_conn(conn: Connection) -> Result<Self> {
+        conn.execute_batch(PRAGMAS)?;
+        let mut db = Self { conn };
+        db.migrate()?;
+        Ok(db)
+    }
+
+    fn migrate(&mut self) -> Result<()> {
+        let version: i32 = self
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+
+        if version > SCHEMA_VERSION {
+            return Err(Error::SchemaTooNew {
+                found: version,
+                supported: SCHEMA_VERSION,
+            });
+        }
+        if version == SCHEMA_VERSION {
+            return Ok(());
+        }
+
+        // Migrações são aplicadas em ordem, cada uma numa transação. Da v1 em
+        // diante, cada passo novo entra aqui como um braço a mais — nunca
+        // editando o schema.sql, que descreve só a criação do zero.
+        let tx = self.conn.transaction()?;
+        if version < 1 {
+            tx.execute_batch(SCHEMA_SQL)?;
+        }
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    #[must_use]
+    pub fn conn_mut(&mut self) -> &mut Connection {
+        &mut self.conn
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cria_schema_do_zero() {
+        let db = Db::open_in_memory().expect("abrir índice em memória");
+        let version: i32 = db
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .expect("ler user_version");
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migrar_de_novo_e_no_op() {
+        let db = Db::open_in_memory().expect("abrir");
+        let mut db = db;
+        db.migrate().expect("segunda migração não deve falhar");
+    }
+
+    /// Guarda-chuva: o FTS5 precisa estar compilado no SQLite embutido, senão
+    /// a busca some sem aviso.
+    #[test]
+    fn fts5_esta_disponivel_e_dobra_acento() {
+        let db = Db::open_in_memory().expect("abrir");
+        db.conn()
+            .execute(
+                "INSERT INTO track_fts (rowid, title, artist, album, album_artist)
+                 VALUES (1, 'Eduardo e Mônica', 'Legião Urbana', 'Dois', 'Legião Urbana')",
+                [],
+            )
+            .expect("inserir no fts");
+
+        // Busca sem acento tem que achar o registro acentuado.
+        let hits: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM track_fts WHERE track_fts MATCH 'monica'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("consultar fts");
+        assert_eq!(hits, 1, "remove_diacritics não está ativo");
+    }
+
+    #[test]
+    fn recusa_indice_de_versao_futura() {
+        let conn = Connection::open_in_memory().expect("abrir conexão");
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+            .expect("marcar versão futura");
+
+        let err = Db::from_conn(conn).expect_err("deveria recusar");
+        assert!(matches!(err, Error::SchemaTooNew { .. }));
+    }
+}

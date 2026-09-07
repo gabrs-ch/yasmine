@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/core",
+    "crates/audio",
+    "crates/sync",
+    "crates/pc-app",
+    "crates/android-ffi",
+    "tools/libgen",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+player-core = { path = "crates/core" }
+player-audio = { path = "crates/audio" }
+player-sync = { path = "crates/sync" }
+
+blake3 = "1"
+lofty = "0.22"
+rusqlite = { version = "0.37", features = ["bundled", "blob", "backup"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v7"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Alocação e cópia escondidas: o que mais custa num hot loop de scan/render.
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+inefficient_to_string = "warn"
+large_types_passed_by_value = "warn"
+# `unwrap` some em release e vira crash silencioso pro usuário.
+unwrap_used = "warn"
+
+# Release: otimizado pra binário pequeno e start rápido.
+# LTO fat + 1 codegen unit custa tempo de build, não de execução.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+# Debug: as dependências (symphonia, blake3, sqlite) rodam otimizadas mesmo em
+# build de debug — sem isso, decodificar áudio e hashear ficam inutilizáveis.
+[profile.dev]
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
