@@ -5,11 +5,16 @@
 
 pub mod art;
 pub mod db;
+pub mod library;
 pub mod model;
 pub mod norm;
 pub mod scan;
 
+#[cfg(test)]
+mod testutil;
+
 pub use art::{ArtCache, ArtRef, KnownArt};
 pub use db::{Db, Error, Result};
+pub use library::{Sort, TrackRow};
 pub use model::{Album, AlbumId, Artist, ArtistId, DeviceId, Track, TrackId, TrackKey};
 pub use scan::{ScanReport, scan};

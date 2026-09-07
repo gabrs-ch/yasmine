@@ -71,6 +71,9 @@ impl Db {
 
     fn from_conn(conn: Connection) -> Result<Self> {
         conn.execute_batch(PRAGMAS)?;
+        // Habilita `rarray(?)`, que deixa buscar uma janela inteira de ids
+        // numa consulta só em vez de uma por linha visível.
+        rusqlite::vtab::array::load_module(&conn)?;
         let mut db = Self { conn };
         db.migrate()?;
         Ok(db)

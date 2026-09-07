@@ -586,83 +586,8 @@ mod tests {
     use super::*;
 
     use std::fs;
-    use std::path::PathBuf;
 
-    use lofty::config::WriteOptions;
-    use lofty::picture::{MimeType, Picture, PictureType};
-    use lofty::tag::{Tag, TagExt, TagType};
-
-    /// ~1s de silêncio em frames MPEG-1 Layer III válidos. Gerar aqui deixa o
-    /// teste sem depender de arquivo externo, e ainda assim faz o `lofty`
-    /// trabalhar num MP3 de verdade.
-    fn mp3_silencioso() -> Vec<u8> {
-        const FRAME_LEN: usize = 417;
-        let mut out = vec![0u8; 39 * FRAME_LEN];
-        for frame in out.as_chunks_mut::<FRAME_LEN>().0 {
-            frame[..4].copy_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
-        }
-        out
-    }
-
-    fn png(cor: [u8; 3]) -> Vec<u8> {
-        let mut img = image::RgbImage::new(8, 8);
-        for p in img.pixels_mut() {
-            *p = image::Rgb(cor);
-        }
-        let mut out = Vec::new();
-        image::DynamicImage::ImageRgb8(img)
-            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-            .expect("codificar png");
-        out
-    }
-
-    fn escreve(path: &Path, titulo: &str, artista: &str, album: &str, capa: Option<&[u8]>) {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("criar diretório");
-        }
-        fs::write(path, mp3_silencioso()).expect("gravar áudio");
-
-        let mut tag = Tag::new(TagType::Id3v2);
-        tag.set_title(titulo.to_owned());
-        tag.set_artist(artista.to_owned());
-        tag.set_album(album.to_owned());
-        tag.set_track(1);
-        if let Some(capa) = capa {
-            tag.push_picture(Picture::new_unchecked(
-                PictureType::CoverFront,
-                Some(MimeType::Png),
-                None,
-                capa.to_vec(),
-            ));
-        }
-        tag.save_to_path(path, WriteOptions::default())
-            .expect("gravar tag");
-    }
-
-    struct Ambiente {
-        _dir: PathBuf,
-        musica: PathBuf,
-        cache: PathBuf,
-    }
-
-    fn ambiente(nome: &str) -> Ambiente {
-        let dir = std::env::temp_dir().join(format!("player-scan-{nome}"));
-        let _ = fs::remove_dir_all(&dir);
-        let musica = dir.join("musica");
-        let cache = dir.join("cache");
-        fs::create_dir_all(&musica).expect("criar pasta de música");
-        Ambiente {
-            _dir: dir,
-            musica,
-            cache,
-        }
-    }
-
-    fn conta(db: &Db, sql: &str) -> i64 {
-        db.conn()
-            .query_row(sql, [], |r| r.get(0))
-            .expect("consultar contagem")
-    }
+    use crate::testutil::{ambiente, conta, escreve, mp3_silencioso, png};
 
     #[test]
     fn indexa_faixas_e_extrai_metadata() {

@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use player_core::library::{self, Sort};
 use player_core::{ArtCache, Db, scan};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,6 +37,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         total as f64 / elapsed.as_secs_f64()
     );
     println!("cache de capas: {}", cache.display());
+
+    // O que a UI faz de fato: montar a view, buscar, e pedir só a janela
+    // visível. Se algum destes não for instantâneo, a lista trava ao digitar.
+    let t = Instant::now();
+    let ids = library::view(&db, Sort::ArtistAlbum)?;
+    println!(
+        "\nview      {:>6.1} ms  ({} ids, {} KB)",
+        t.elapsed().as_secs_f64() * 1000.0,
+        ids.len(),
+        ids.len() * size_of::<player_core::TrackId>() / 1024
+    );
+
+    let t = Instant::now();
+    let achados = library::search(&db, "azul cor", Sort::ArtistAlbum)?;
+    println!(
+        "busca     {:>6.1} ms  ({} resultados)",
+        t.elapsed().as_secs_f64() * 1000.0,
+        achados.len()
+    );
+
+    let janela = &ids[ids.len() / 2..(ids.len() / 2 + 40).min(ids.len())];
+    let t = Instant::now();
+    let linhas = library::rows(&db, janela)?;
+    println!(
+        "janela    {:>6.1} ms  ({} linhas, do meio da lista)",
+        t.elapsed().as_secs_f64() * 1000.0,
+        linhas.len()
+    );
 
     Ok(())
 }

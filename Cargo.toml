@@ -25,7 +25,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 jwalk = "0.8"
 lofty = "0.22"
 rayon = "1"
-rusqlite = { version = "0.37", features = ["bundled", "blob", "backup"] }
+rusqlite = { version = "0.37", features = ["bundled", "blob", "backup", "array"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v7"] }
 
