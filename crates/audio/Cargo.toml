@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+cpal.workspace = true
+rtrb.workspace = true
+symphonia.workspace = true
 thiserror.workspace = true
 
 [lints]
