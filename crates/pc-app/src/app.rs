@@ -1,0 +1,893 @@
+//! A aplicação.
+//!
+//! # Política de repaint
+//!
+//! Metade do custo de CPU de um player parado vem de redesenhar à toa. Aqui:
+//!
+//! - parado, a janela só redesenha quando acontece algo (modo reativo do egui);
+//! - tocando, redesenha a ~4 Hz — o suficiente para a barra de progresso andar;
+//! - escaneando, a ~10 Hz, para o contador não parecer travado.
+//!
+//! Nunca 60 fps.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, channel};
+use std::time::{Duration, Instant};
+
+use eframe::egui::{self, Align2, Color32, CornerRadius, Rect, Sense, Stroke, pos2, vec2};
+use player_audio::{Engine, Event};
+use player_core::library::{self, Sort, Stats, TrackRow};
+use player_core::scan::scan_with_progress;
+use player_core::{ArtCache, Db, TrackId};
+
+use crate::art::ArtLoader;
+use crate::paths::Paths;
+use crate::theme;
+
+/// Chave no `meta` onde a pasta escolhida fica guardada, para a próxima
+/// execução abrir direto na biblioteca.
+const META_ROOT: &str = "library_root";
+
+struct ScanJob {
+    progress: Arc<AtomicUsize>,
+    result: Receiver<Result<player_core::ScanReport, String>>,
+    started: Instant,
+}
+
+pub struct App {
+    db: Db,
+    paths: Paths,
+    root: Option<PathBuf>,
+
+    view: Vec<TrackId>,
+    query: String,
+    sort: Sort,
+    stats: Stats,
+
+    engine: Engine,
+    art: ArtLoader,
+
+    /// Índice na `view` da faixa selecionada e da faixa tocando.
+    selected: Option<usize>,
+    playing: Option<usize>,
+    now: Option<TrackRow>,
+
+    scan: Option<ScanJob>,
+    status: String,
+    focus_search: bool,
+}
+
+impl App {
+    pub fn new(cc: &eframe::CreationContext<'_>, folder: Option<PathBuf>) -> Result<Self, String> {
+        theme::apply(&cc.egui_ctx);
+
+        let paths = Paths::resolve().map_err(|err| err.to_string())?;
+        let db = Db::open(&paths.db).map_err(|err| err.to_string())?;
+
+        let root: Option<PathBuf> = db
+            .conn()
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                [META_ROOT],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .map(PathBuf::from);
+
+        let mut app = Self {
+            art: ArtLoader::new(paths.cache.clone()),
+            db,
+            paths,
+            root,
+            view: Vec::new(),
+            query: String::new(),
+            sort: Sort::ArtistAlbum,
+            stats: Stats::default(),
+            engine: Engine::new(),
+            selected: None,
+            playing: None,
+            now: None,
+            scan: None,
+            status: String::new(),
+            focus_search: false,
+        };
+        app.reload();
+        match folder {
+            // Pasta vinda da linha de comando manda sobre a guardada.
+            Some(folder) => app.set_root(folder),
+            // Reescaneia a pasta guardada em segundo plano. Um rescan de
+            // biblioteca intacta custa décimos de segundo e não abre arquivo
+            // nenhum, então sai mais barato que pedir ao usuário que clique
+            // em "Reescanear" — e músicas novas simplesmente aparecem.
+            None => {
+                if let Some(root) = app.root.clone() {
+                    app.start_scan(root);
+                }
+            }
+        }
+        Ok(app)
+    }
+
+    // -------------------------------------------------------------------------
+    // Biblioteca
+    // -------------------------------------------------------------------------
+
+    fn reload(&mut self) {
+        self.view = library::search(&self.db, &self.query, self.sort).unwrap_or_default();
+        self.stats = library::stats(&self.db).unwrap_or_default();
+        // A faixa tocando pode ter mudado de posição na lista filtrada.
+        self.playing = self.playing.filter(|&index| index < self.view.len());
+    }
+
+    /// Aponta a biblioteca para `folder`, guarda a escolha e escaneia.
+    fn set_root(&mut self, folder: PathBuf) {
+        let _ = self.db.conn().execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (META_ROOT, folder.to_string_lossy()),
+        );
+        // Uma pasta por vez: apontar outra esquece a anterior, senão a
+        // contagem de faixas soma bibliotecas que o usuário não vê mais.
+        let _ = player_core::keep_only_root(&self.db, &folder);
+        self.root = Some(folder.clone());
+        self.playing = None;
+        self.now = None;
+        self.selected = None;
+        self.engine.stop();
+        self.start_scan(folder);
+    }
+
+    fn pick_folder(&mut self) {
+        // O diálogo nativo é modal e bloqueia esta thread — que é o
+        // comportamento certo: não há nada a desenhar enquanto ele está aberto.
+        let Some(folder) = rfd::FileDialog::new()
+            .set_title("Escolha a pasta de música")
+            .pick_folder()
+        else {
+            return;
+        };
+
+        self.set_root(folder);
+    }
+
+    /// Escaneia numa thread própria, com conexão própria.
+    ///
+    /// O WAL permite que a conexão da UI continue lendo enquanto o scanner
+    /// escreve, então a lista segue navegável durante a varredura.
+    fn start_scan(&mut self, root: PathBuf) {
+        let progress = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = channel();
+        let db_path = self.paths.db.clone();
+        let cache = self.paths.cache.clone();
+        let counter = Arc::clone(&progress);
+
+        std::thread::Builder::new()
+            .name("scan".into())
+            .spawn(move || {
+                let outcome =
+                    Db::open(&db_path)
+                        .map_err(|err| err.to_string())
+                        .and_then(|mut db| {
+                            let art = ArtCache::new(cache);
+                            scan_with_progress(&mut db, &root, &art, &counter)
+                                .map_err(|err| err.to_string())
+                        });
+                let _ = tx.send(outcome);
+            })
+            .ok();
+
+        self.status = "escaneando…".into();
+        self.scan = Some(ScanJob {
+            progress,
+            result: rx,
+            started: Instant::now(),
+        });
+    }
+
+    fn poll_scan(&mut self) {
+        let Some(job) = &self.scan else { return };
+        let Ok(outcome) = job.result.try_recv() else {
+            return;
+        };
+
+        let elapsed = job.started.elapsed();
+        self.scan = None;
+        match outcome {
+            Ok(report) => {
+                self.status = format!(
+                    "{} novas · {} atualizadas · {} removidas · {} inalteradas em {:.1}s",
+                    report.added,
+                    report.updated,
+                    report.removed,
+                    report.unchanged,
+                    elapsed.as_secs_f64()
+                );
+                self.reload();
+            }
+            Err(err) => self.status = format!("falha no scan: {err}"),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Playback
+    // -------------------------------------------------------------------------
+
+    fn play_at(&mut self, index: usize) {
+        let Some(&id) = self.view.get(index) else {
+            return;
+        };
+        let Ok(Some(path)) = library::track_path(&self.db, id) else {
+            self.status = "não encontrei o arquivo dessa faixa".into();
+            return;
+        };
+
+        self.engine.play(path);
+        self.playing = Some(index);
+        self.now = library::rows(&self.db, &[id])
+            .ok()
+            .and_then(|mut rows| rows.pop());
+        self.queue_next();
+    }
+
+    /// Entrega a próxima faixa ao motor antes de a atual acabar. Sem isto não
+    /// há gapless: o motor precisa abrir o próximo arquivo com antecedência.
+    fn queue_next(&mut self) {
+        let next = self
+            .playing
+            .and_then(|index| self.view.get(index + 1))
+            .and_then(|&id| library::track_path(&self.db, id).ok().flatten());
+        self.engine.set_next(next);
+    }
+
+    fn step(&mut self, delta: isize) {
+        let Some(current) = self.playing else {
+            return;
+        };
+        let target = current as isize + delta;
+        if target >= 0 && (target as usize) < self.view.len() {
+            self.play_at(target as usize);
+        }
+    }
+
+    fn toggle_play(&mut self) {
+        let state = self.engine.state();
+        if state.playing {
+            self.engine.pause();
+        } else if self.playing.is_some() {
+            self.engine.resume();
+        } else if let Some(index) = self.selected.or(Some(0)) {
+            self.play_at(index);
+        }
+    }
+
+    fn poll_audio(&mut self) {
+        while let Some(event) = self.engine.poll_event() {
+            match event {
+                // A emenda já aconteceu no motor; aqui só acompanhamos o
+                // índice e engatamos a faixa seguinte.
+                Event::Advanced { .. } => {
+                    self.playing = self.playing.map(|index| index + 1);
+                    self.now = self
+                        .playing
+                        .and_then(|index| self.view.get(index).copied())
+                        .and_then(|id| library::rows(&self.db, &[id]).ok())
+                        .and_then(|mut rows| rows.pop());
+                    self.queue_next();
+                }
+                Event::Finished => {
+                    self.playing = None;
+                    self.now = None;
+                }
+                Event::Error(err) => self.status = err,
+                Event::Started { .. } => {}
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Desenho
+    // -------------------------------------------------------------------------
+
+    fn top_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(4.0);
+            if ui.button("Pasta…").clicked() {
+                self.pick_folder();
+            }
+
+            if let Some(root) = &self.root {
+                let label = root.to_string_lossy();
+                ui.label(
+                    egui::RichText::new(shorten(&label, 48))
+                        .font(theme::small())
+                        .color(theme::DIM),
+                );
+                if self.scan.is_none() && ui.button("Reescanear").clicked() {
+                    self.start_scan(root.clone());
+                }
+            }
+
+            ui.add_space(8.0);
+            let search = ui.add(
+                egui::TextEdit::singleline(&mut self.query)
+                    .desired_width(220.0)
+                    .hint_text("buscar"),
+            );
+            if std::mem::take(&mut self.focus_search) {
+                search.request_focus();
+            }
+            if search.changed() {
+                self.reload();
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(4.0);
+                let texto = match &self.scan {
+                    Some(job) => format!("escaneando… {}", job.progress.load(Ordering::Relaxed)),
+                    None => format!(
+                        "{} faixas · {} álbuns · {} artistas",
+                        self.stats.tracks, self.stats.albums, self.stats.artists
+                    ),
+                };
+                ui.label(
+                    egui::RichText::new(texto)
+                        .font(theme::small())
+                        .color(theme::DIM),
+                );
+            });
+        });
+    }
+
+    fn list(&mut self, ui: &mut egui::Ui) {
+        if self.view.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(80.0);
+                let texto = if self.root.is_none() {
+                    "Escolha uma pasta de música para começar."
+                } else if self.query.is_empty() {
+                    "Nenhuma faixa indexada nessa pasta."
+                } else {
+                    "Nada encontrado."
+                };
+                ui.label(egui::RichText::new(texto).color(theme::DIM));
+            });
+            return;
+        }
+
+        // O egui insere espaçamento vertical entre widgets; numa lista de
+        // faixas isso abre uma fresta entre as linhas, quebra a zebra e come
+        // densidade. Aqui as linhas se encostam.
+        ui.spacing_mut().item_spacing.y = 0.0;
+
+        let width = ui.available_width();
+        let cols = Columns::new(width);
+
+        // Cabeçalho: rótulos apagados e uma régua de 1px. Sem fundo, sem caixa.
+        let (header, _) = ui.allocate_exact_size(vec2(width, 18.0), Sense::hover());
+        let painter = ui.painter();
+        for (label, rect) in [
+            ("#", cols.num(header)),
+            ("TÍTULO", cols.title(header)),
+            ("ARTISTA", cols.artist(header)),
+            ("ÁLBUM", cols.album(header)),
+            ("DUR", cols.duration(header)),
+        ] {
+            painter.text(
+                pos2(rect.left(), header.center().y),
+                Align2::LEFT_CENTER,
+                label,
+                theme::small(),
+                theme::FAINT,
+            );
+        }
+        painter.line_segment(
+            [
+                pos2(header.left(), header.bottom() - 0.5),
+                pos2(header.right(), header.bottom() - 0.5),
+            ],
+            Stroke::new(1.0, theme::RULE),
+        );
+
+        let mut clicked: Option<(usize, bool)> = None;
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show_rows(ui, theme::ROW_HEIGHT, self.view.len(), |ui, range| {
+                // Só a janela visível vai ao banco — ~40 linhas, 0,1 ms.
+                let ids = &self.view[range.clone()];
+                let rows = library::rows(&self.db, ids).unwrap_or_default();
+
+                for (offset, row) in rows.iter().enumerate() {
+                    let index = range.start + offset;
+                    let (rect, response) =
+                        ui.allocate_exact_size(vec2(width, theme::ROW_HEIGHT), Sense::click());
+
+                    let is_playing = self.playing == Some(index);
+                    let is_selected = self.selected == Some(index);
+                    let painter = ui.painter();
+
+                    // Zebra sutil: ajuda a percorrer uma lista longa sem
+                    // acrescentar nenhuma linha ou borda.
+                    if index % 2 == 1 {
+                        painter.rect_filled(rect, CornerRadius::ZERO, theme::PANEL);
+                    }
+                    if is_selected {
+                        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+                    }
+                    if response.hovered() && !is_selected {
+                        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+                    }
+                    if is_playing {
+                        // Marca de 2px na canaleta esquerda: o acento aparece
+                        // aqui e na barra de progresso, em mais nenhum lugar.
+                        painter.rect_filled(
+                            Rect::from_min_size(rect.left_top(), vec2(2.0, rect.height())),
+                            CornerRadius::ZERO,
+                            theme::ACCENT,
+                        );
+                    }
+
+                    let title_color = if is_playing {
+                        theme::ACCENT
+                    } else {
+                        theme::TEXT
+                    };
+                    cell(
+                        painter,
+                        cols.num(rect),
+                        &row.track_no.map_or_else(String::new, |n| n.to_string()),
+                        theme::mono(),
+                        theme::FAINT,
+                    );
+                    cell(
+                        painter,
+                        cols.title(rect),
+                        &row.title,
+                        theme::body(),
+                        title_color,
+                    );
+                    cell(
+                        painter,
+                        cols.artist(rect),
+                        row.artist.as_deref().unwrap_or("—"),
+                        theme::body(),
+                        theme::DIM,
+                    );
+                    cell(
+                        painter,
+                        cols.album(rect),
+                        row.album.as_deref().unwrap_or("—"),
+                        theme::body(),
+                        theme::DIM,
+                    );
+                    cell(
+                        painter,
+                        cols.duration(rect),
+                        &format_ms(row.duration_ms),
+                        theme::mono(),
+                        theme::FAINT,
+                    );
+
+                    if response.clicked() {
+                        clicked = Some((index, false));
+                    }
+                    if response.double_clicked() {
+                        clicked = Some((index, true));
+                    }
+                }
+            });
+
+        if let Some((index, play)) = clicked {
+            self.selected = Some(index);
+            if play {
+                self.play_at(index);
+            }
+        }
+    }
+
+    fn player_bar(&mut self, ui: &mut egui::Ui) {
+        let state = self.engine.state();
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+
+            // Capa. É o único lugar da interface onde ela aparece.
+            let (cover, _) = ui.allocate_exact_size(vec2(56.0, 56.0), Sense::hover());
+            let painter = ui.painter();
+            painter.rect_filled(cover, CornerRadius::ZERO, theme::PANEL);
+            let texture = self
+                .now
+                .as_ref()
+                .and_then(|row| row.art_hash)
+                .and_then(|hash| self.art.texture(&hash));
+            if let Some(texture) = texture {
+                ui.painter().image(
+                    texture,
+                    cover,
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            } else {
+                ui.painter().rect_stroke(
+                    cover,
+                    CornerRadius::ZERO,
+                    Stroke::new(1.0, theme::RULE),
+                    egui::StrokeKind::Inside,
+                );
+            }
+
+            ui.add_space(10.0);
+            ui.vertical(|ui| {
+                ui.add_space(6.0);
+                match &self.now {
+                    Some(row) => {
+                        ui.label(egui::RichText::new(&row.title).color(theme::TEXT));
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{}  ·  {}",
+                                row.artist.as_deref().unwrap_or("—"),
+                                row.album.as_deref().unwrap_or("—")
+                            ))
+                            .font(theme::small())
+                            .color(theme::DIM),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            egui::RichText::new("nada tocando")
+                                .font(theme::small())
+                                .color(theme::FAINT),
+                        );
+                    }
+                }
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} / {}",
+                        format_duration(state.position),
+                        state
+                            .duration
+                            .map_or_else(|| "--:--".into(), format_duration)
+                    ))
+                    .font(theme::mono())
+                    .color(theme::DIM),
+                );
+
+                ui.add_space(10.0);
+                if transport(ui, Glyph::Next).clicked() {
+                    self.step(1);
+                }
+                if transport(
+                    ui,
+                    if state.playing {
+                        Glyph::Pause
+                    } else {
+                        Glyph::Play
+                    },
+                )
+                .clicked()
+                {
+                    self.toggle_play();
+                }
+                if transport(ui, Glyph::Prev).clicked() {
+                    self.step(-1);
+                }
+            });
+        });
+
+        ui.add_space(6.0);
+
+        // Barra de progresso: 3px, sem cantos, o segundo e último uso do acento.
+        let width = ui.available_width();
+        let (rect, response) = ui.allocate_exact_size(vec2(width, 3.0), Sense::click_and_drag());
+        let painter = ui.painter();
+        painter.rect_filled(rect, CornerRadius::ZERO, theme::RULE);
+
+        let fraction = state
+            .duration
+            .filter(|d| d.as_secs_f32() > 0.0)
+            .map_or(0.0, |d| {
+                (state.position.as_secs_f32() / d.as_secs_f32()).clamp(0.0, 1.0)
+            });
+        if fraction > 0.0 {
+            painter.rect_filled(
+                Rect::from_min_size(
+                    rect.left_top(),
+                    vec2(rect.width() * fraction, rect.height()),
+                ),
+                CornerRadius::ZERO,
+                theme::ACCENT,
+            );
+        }
+
+        if let (true, Some(total), Some(pointer)) = (
+            response.clicked() || response.dragged(),
+            state.duration,
+            response.interact_pointer_pos(),
+        ) {
+            let target = ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+            self.engine
+                .seek(Duration::from_secs_f32(total.as_secs_f32() * target));
+        }
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        // Atalho não pode roubar tecla de quem está digitando na busca.
+        if ctx.egui_wants_keyboard_input() {
+            ctx.input(|i| {
+                if i.key_pressed(egui::Key::Escape) {
+                    self.focus_search = false;
+                }
+            });
+            return;
+        }
+
+        let (space, enter, down, up, find) = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::Space),
+                i.key_pressed(egui::Key::Enter),
+                i.key_pressed(egui::Key::ArrowDown),
+                i.key_pressed(egui::Key::ArrowUp),
+                i.modifiers.command && i.key_pressed(egui::Key::F),
+            )
+        });
+
+        if space {
+            self.toggle_play();
+        }
+        if find {
+            self.focus_search = true;
+        }
+        if down || up {
+            let last = self.view.len().saturating_sub(1);
+            self.selected = Some(match self.selected {
+                Some(index) if down => (index + 1).min(last),
+                Some(index) => index.saturating_sub(1),
+                None => 0,
+            });
+        }
+        if enter && let Some(index) = self.selected {
+            self.play_at(index);
+        }
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
+        self.art.begin_frame(ctx);
+        self.poll_audio();
+        self.poll_scan();
+        self.shortcuts(ctx);
+
+        egui::Panel::top("comando")
+            .exact_size(34.0)
+            .frame(egui::Frame::new().fill(theme::PANEL))
+            .show(ui, |ui| self.top_bar(ui));
+
+        egui::Panel::bottom("player")
+            .exact_size(84.0)
+            .frame(egui::Frame::new().fill(theme::PANEL))
+            .show(ui, |ui| self.player_bar(ui));
+
+        if !self.status.is_empty() {
+            egui::Panel::bottom("status")
+                .exact_size(20.0)
+                .frame(egui::Frame::new().fill(theme::BG))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(&self.status)
+                                .font(theme::small())
+                                .color(theme::FAINT),
+                        );
+                    });
+                });
+        }
+
+        egui::CentralPanel::no_frame()
+            .frame(egui::Frame::new().fill(theme::BG))
+            .show(ui, |ui| self.list(ui));
+
+        // A política de repaint. Nada de 60 fps.
+        if self.scan.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        } else if self.engine.state().playing {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Peças de desenho
+// -----------------------------------------------------------------------------
+
+/// Larguras das colunas. Fixas onde o conteúdo é previsível (número, duração),
+/// proporcionais onde não é.
+struct Columns {
+    num: f32,
+    title: f32,
+    artist: f32,
+    album: f32,
+    duration: f32,
+}
+
+impl Columns {
+    const PAD: f32 = 10.0;
+
+    fn new(width: f32) -> Self {
+        let num = 38.0;
+        let duration = 52.0;
+        let rest = (width - num - duration - Self::PAD * 2.0).max(120.0);
+        Self {
+            num,
+            title: rest * 0.42,
+            artist: rest * 0.30,
+            album: rest * 0.28,
+            duration,
+        }
+    }
+
+    fn slice(rect: Rect, from: f32, width: f32) -> Rect {
+        Rect::from_min_size(
+            pos2(rect.left() + from + Columns::PAD, rect.top()),
+            vec2(width - 8.0, rect.height()),
+        )
+    }
+
+    fn num(&self, rect: Rect) -> Rect {
+        Self::slice(rect, 0.0, self.num)
+    }
+    fn title(&self, rect: Rect) -> Rect {
+        Self::slice(rect, self.num, self.title)
+    }
+    fn artist(&self, rect: Rect) -> Rect {
+        Self::slice(rect, self.num + self.title, self.artist)
+    }
+    fn album(&self, rect: Rect) -> Rect {
+        Self::slice(rect, self.num + self.title + self.artist, self.album)
+    }
+    fn duration(&self, rect: Rect) -> Rect {
+        Self::slice(
+            rect,
+            self.num + self.title + self.artist + self.album,
+            self.duration,
+        )
+    }
+}
+
+/// Texto de uma célula, truncado na largura da coluna.
+fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, color: Color32) {
+    if text.is_empty() {
+        return;
+    }
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat {
+            font_id: font,
+            color,
+            ..Default::default()
+        },
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
+    let galley = painter.layout_job(job);
+    painter.galley(
+        pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+}
+
+#[derive(Clone, Copy)]
+enum Glyph {
+    Prev,
+    Play,
+    Pause,
+    Next,
+}
+
+/// Botão de transporte desenhado à mão.
+///
+/// Formas geométricas em vez de glifos de fonte: garante o traço nítido que a
+/// direção visual pede e não depende de a fonte do sistema ter os símbolos.
+fn transport(ui: &mut egui::Ui, glyph: Glyph) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(30.0, 26.0), Sense::click());
+    let painter = ui.painter();
+
+    if response.hovered() {
+        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+    }
+    let color = if response.hovered() {
+        theme::TEXT
+    } else {
+        theme::DIM
+    };
+
+    let c = rect.center();
+    let s = 5.0;
+    match glyph {
+        Glyph::Play => {
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    pos2(c.x - s * 0.6, c.y - s),
+                    pos2(c.x - s * 0.6, c.y + s),
+                    pos2(c.x + s, c.y),
+                ],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        Glyph::Pause => {
+            for dx in [-3.0, 1.5] {
+                painter.rect_filled(
+                    Rect::from_min_size(pos2(c.x + dx, c.y - s), vec2(2.5, s * 2.0)),
+                    CornerRadius::ZERO,
+                    color,
+                );
+            }
+        }
+        Glyph::Prev | Glyph::Next => {
+            let dir = if matches!(glyph, Glyph::Next) {
+                1.0
+            } else {
+                -1.0
+            };
+            for offset in [-s * 0.9, s * 0.1] {
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        pos2(c.x + dir * offset, c.y - s * 0.8),
+                        pos2(c.x + dir * offset, c.y + s * 0.8),
+                        pos2(c.x + dir * (offset + s * 0.8), c.y),
+                    ],
+                    color,
+                    Stroke::NONE,
+                ));
+            }
+            painter.rect_filled(
+                Rect::from_min_size(
+                    pos2(
+                        c.x + dir * s * 0.9 - if dir > 0.0 { 0.0 } else { 2.0 },
+                        c.y - s * 0.8,
+                    ),
+                    vec2(2.0, s * 1.6),
+                ),
+                CornerRadius::ZERO,
+                color,
+            );
+        }
+    }
+
+    response
+}
+
+fn format_ms(ms: Option<u64>) -> String {
+    ms.map_or_else(
+        || "--:--".into(),
+        |ms| format_duration(Duration::from_millis(ms)),
+    )
+}
+
+fn format_duration(d: Duration) -> String {
+    let total = d.as_secs();
+    format!("{}:{:02}", total / 60, total % 60)
+}
+
+/// Encurta pelo começo: o fim de um caminho é a parte que identifica a pasta.
+fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let tail: String = text
+        .chars()
+        .skip(text.chars().count().saturating_sub(max - 1))
+        .collect();
+    format!("…{tail}")
+}

@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use image::ImageEncoder;
 use image::codecs::jpeg::JpegEncoder;
@@ -159,6 +160,15 @@ impl ArtCache {
     }
 }
 
+/// Contador de nomes temporários.
+///
+/// Dois workers podem hashear o mesmo blob antes de qualquer um registrar o
+/// resultado, e aí os dois materializam a mesma capa. Com um nome temporário
+/// fixo, o primeiro `rename` levava o arquivo embora e o segundo falhava com
+/// ENOENT. Um sufixo único por gravação resolve: os dois renomeiam para o
+/// mesmo destino final, e `rename` é atômico.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
 /// Grava via arquivo temporário + rename: se o processo morrer no meio, o
 /// cache fica sem a miniatura em vez de com meia miniatura.
 fn write_jpeg(path: &Path, image: &image::RgbImage) -> std::io::Result<()> {
@@ -166,7 +176,8 @@ fn write_jpeg(path: &Path, image: &image::RgbImage) -> std::io::Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    let tmp = path.with_extension("jpg.tmp");
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("jpg.{seq}.tmp"));
     let mut buf = Vec::new();
     JpegEncoder::new_with_quality(&mut buf, JPEG_QUALITY)
         .write_image(
@@ -248,6 +259,35 @@ mod tests {
                 thumb.height()
             );
         }
+    }
+
+    /// Dois workers materializando a mesma capa ao mesmo tempo não podem
+    /// brigar pelo arquivo temporário.
+    #[test]
+    fn duas_gravacoes_simultaneas_da_mesma_capa_nao_colidem() {
+        let dir = tmpdir("corrida");
+        let blob = png_valido();
+        let hash: [u8; 32] = blake3::hash(&blob).into();
+
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let dir = dir.clone();
+                let blob = blob.clone();
+                scope.spawn(move || {
+                    // Cada thread com o seu cache: nenhuma vê o registro da
+                    // outra, então todas decodificam e gravam.
+                    ArtCache::new(dir).store(&blob).expect("materializar");
+                });
+            }
+        });
+
+        assert!(ArtRef::thumb_path(&dir, &hash, 96).is_file());
+        let sobras: Vec<_> = fs::read_dir(dir.join("art").join(&hex32(&hash)[..2]))
+            .expect("ler diretório")
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(sobras.is_empty(), "sobrou arquivo temporário: {sobras:?}");
     }
 
     #[test]

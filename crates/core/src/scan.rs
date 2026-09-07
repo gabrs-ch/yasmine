@@ -285,6 +285,31 @@ fn parse(root: &Path, file: &Found, art_cache: &ArtCache) -> Option<Parsed> {
 // Escrita
 // -----------------------------------------------------------------------------
 
+/// Faz de `root` a única biblioteca, esquecendo as outras.
+///
+/// "Aponte uma pasta" é a promessa da interface, e o índice tem que refletir
+/// isso: sem esta limpeza, trocar de pasta soma as duas e a contagem de faixas
+/// passa a mentir.
+///
+/// O `ON DELETE CASCADE` limpa as faixas, mas **não** o `track_fts`: tabela
+/// virtual não participa de chave estrangeira. Sem apagar à mão, a busca
+/// continuaria devolvendo faixas que não existem mais.
+pub fn keep_only_root(db: &Db, root: &Path) -> Result<()> {
+    let path = root.to_string_lossy();
+    let tx = db.conn().unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM track_fts WHERE rowid IN (
+             SELECT t.id FROM track t
+             JOIN library_root r ON r.id = t.root_id
+             WHERE r.path <> ?1
+         )",
+        [&path],
+    )?;
+    tx.execute("DELETE FROM library_root WHERE path <> ?1", [&path])?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn ensure_root(db: &Db, root: &Path) -> Result<i64> {
     let path = root.to_string_lossy();
     let now = now_ms();
@@ -744,6 +769,37 @@ mod tests {
             conta(&db, "SELECT count(*) FROM track WHERE art_id IS NOT NULL"),
             5,
             "todas as faixas apontam para a capa"
+        );
+    }
+
+    /// Trocar de pasta tem que esquecer a anterior — inclusive no índice de
+    /// busca, que não é limpo pelo CASCADE.
+    #[test]
+    fn apontar_outra_pasta_esquece_a_anterior() {
+        let env = ambiente("troca-de-pasta");
+        let outra = env.musica.parent().expect("pai").join("outra");
+        escreve(
+            &env.musica.join("a/1.mp3"),
+            "Antiga",
+            "Artista",
+            "Álbum",
+            None,
+        );
+        escreve(&outra.join("b/1.mp3"), "Nova", "Outro", "Disco", None);
+
+        let mut db = Db::open_in_memory().expect("abrir");
+        let art = ArtCache::new(env.cache.clone());
+        scan(&mut db, &env.musica, &art).expect("primeira pasta");
+
+        keep_only_root(&db, &outra).expect("esquecer a anterior");
+        scan(&mut db, &outra, &art).expect("segunda pasta");
+
+        assert_eq!(conta(&db, "SELECT count(*) FROM track"), 1);
+        assert_eq!(conta(&db, "SELECT count(*) FROM library_root"), 1);
+        assert_eq!(
+            conta(&db, "SELECT count(*) FROM track_fts"),
+            1,
+            "a busca ficou com faixa fantasma da pasta antiga"
         );
     }
 

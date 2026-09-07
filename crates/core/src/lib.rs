@@ -17,4 +17,4 @@ pub use art::{ArtCache, ArtRef, KnownArt};
 pub use db::{Db, Error, Result};
 pub use library::{Sort, TrackRow};
 pub use model::{Album, AlbumId, Artist, ArtistId, DeviceId, Track, TrackId, TrackKey};
-pub use scan::{ScanReport, scan};
+pub use scan::{ScanReport, keep_only_root, scan};

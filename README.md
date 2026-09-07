@@ -65,11 +65,60 @@ do arquivo SQLite; o Kotlin só consulta via FFI.
 ## Fases
 
 - [x] **0 — Fundamentos.** Workspace, schema, clippy/fmt no CI, gerador de biblioteca.
-- [ ] **1 — Player PC.** Pasta → scan → índice → tocar. Lista, play/pause/next/prev, busca.
+- [x] **1 — Player PC.** Pasta → scan → índice → tocar. Lista, play/pause/next/prev, busca, seek.
 - [ ] **2 — Polimento PC.** Fila, playlists, shuffle/repeat, atalhos, tray, `notify`, profiling.
 - [ ] **3 — Android standalone.** Compose + `core` via uniffi.
 - [ ] **4 — Sync na LAN.** QR → mDNS → Noise → diff por hash.
 - [ ] **5 — Refinamento.** Profiling real, biblioteca grande, onboarding.
+
+## Medições
+
+Numa VM de 4 núcleos e 3,8 GB, com renderização por software (sem GPU),
+biblioteca sintética de 50 000 faixas em 4 998 álbuns:
+
+| | |
+|---|---|
+| Primeiro scan | 1,7 s · 75 MB de pico · 4 998 capas decodificadas |
+| Rescan sem mudanças | 0,19 s · nenhum arquivo aberto |
+| Índice em disco | 20 MB |
+| Montar a lista ordenada | 22,9 ms (390 KB de ids) |
+| Buscar enquanto digita | 2,4 ms (2 044 resultados) |
+| Janela visível da lista | 0,1 ms (40 linhas) |
+| Janela aberta | ~530 ms |
+| **CPU com a janela aberta e parada** | **0%** |
+| Playback | 0 underruns · 0,02 s de CPU em 3,3 s |
+
+A capa sintética é pequena; com capa real de 1000×1000 cada álbum novo custa
+~5,8 ms de decode e resize, o que somaria ~8 s (em 4 threads) ao *primeiro*
+scan de 5 000 álbuns. Rescans não pagam nada disso.
+
+Do RSS de 143 MB do app, 67 MB são o `libLLVM` do llvmpipe — o rasterizador
+OpenGL por software desta VM, que não existe numa máquina com driver de GPU.
+
+## Interface
+
+Direção visual: software de áudio profissional, não app de streaming. Preto
+quase absoluto, cantos retos, zero sombra, réguas de 1px, linhas de 22px
+(~25 faixas visíveis sem rolar), mono nos números para as colunas alinharem.
+
+O roxo/azul da identidade entra como **acento único**, em exatamente dois
+lugares: a marca de 2px na faixa tocando e o preenchimento da barra de
+progresso. Gradiente roxo espalhado é o que faz uma interface parecer
+genérica; um acento contido faz o oposto.
+
+A lista não mostra capa, de propósito: 25 miniaturas subindo e descendo a cada
+rolagem custariam textura à toa, e a densidade é o ponto. A capa aparece na
+barra do player.
+
+## Atalhos
+
+| | |
+|---|---|
+| `Espaço` | tocar / pausar |
+| `↑` `↓` | mover a seleção |
+| `Enter` | tocar a seleção |
+| `Ctrl+F` | ir para a busca |
+| duplo clique | tocar a faixa |
 
 ## Desenvolvimento
 
@@ -86,5 +135,18 @@ mesma seed dá o mesmo corpus byte a byte:
 cargo run --release -p libgen -- --out ./testdata/lib50k --tracks 50000
 ```
 
-50k faixas em ~2,5s, ocupando 1,2 GB. Como regenerar é barato, o corpus grande
+50k faixas em ~2s, ocupando 1,2 GB. Como regenerar é barato, o corpus grande
 não fica versionado nem guardado — `testdata/` está no `.gitignore`.
+
+Medir o scan e as consultas contra uma pasta de verdade (rodar duas vezes: a
+segunda passada é o que mostra se o caminho incremental está funcionando):
+
+```bash
+cargo run --release -p player-core --example scan -- ./testdata/lib50k /tmp/lib.db
+```
+
+Rodar o player apontado numa pasta:
+
+```bash
+cargo run --release -p player-pc -- ./testdata/lib50k
+```

@@ -19,14 +19,17 @@ const SCHEMA_SQL: &str = include_str!("schema.sql");
 ///   fsync a menos por transação num scan de 50k faixas.
 /// - `mmap_size = 256 MB`: lê páginas direto do page cache do SO, sem copiar
 ///   pro buffer do SQLite.
-/// - `cache_size = -16000`: 16 MB (o sinal negativo é KiB, não páginas).
+/// - `cache_size = -4000`: 4 MB (o sinal negativo é KiB, não páginas). Medido
+///   sobre 50 000 faixas, 16 MB e 1 MB dão o mesmo tempo de consulta — com o
+///   `mmap` ligado, quem serve as páginas é o cache do SO, e o cache próprio
+///   do SQLite vira memória parada.
 const PRAGMAS: &str = "
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous  = NORMAL;
     PRAGMA foreign_keys = ON;
     PRAGMA temp_store   = MEMORY;
     PRAGMA mmap_size    = 268435456;
-    PRAGMA cache_size   = -16000;
+    PRAGMA cache_size   = -4000;
     PRAGMA busy_timeout = 5000;
 ";
 
