@@ -197,13 +197,14 @@ MINI, SHUF e RPT são ícone, não texto — mesma razão do transporte (Fase 1)
 forma vetorial garante o traço nítido, sem depender de a fonte do sistema
 ter o símbolo certo.
 
-**A marca do Yasmine** é cinco pétalas facetadas em torno de um núcleo
-vazado — cantos retos, sem curva, para caber na mesma linguagem visual do
-resto da interface. Existe em dois formatos que não se duplicam por acaso:
-[`assets/mark.svg`](crates/pc-app/assets/mark.svg) é a origem, rasterizada
-uma vez para o ícone da janela e do atalho; `draw_mark()` reimplementa a
-mesma geometria em Rust puro para a tela de boas-vindas do app, porque
-vetor escala sem serrilhado e raster não.
+**A marca do Yasmine** é uma nota musical brotando folhas — arte fornecida
+pelo usuário, cor chapada, sem gradiente. É a única peça da interface com
+curva de verdade: "cantos retos" é regra pra elementos da interface (botões,
+linhas, divisores), não uma lei universal pra identidade visual em si.
+[`assets/icon-256.png`](crates/pc-app/assets/icon-256.png) é o arquivo único
+— janela, atalho da área de trabalho e tela de boas-vindas do app carregam
+o mesmo PNG (com transparência) como textura, em vez de cada lugar ter sua
+própria cópia ou reimplementação.
 
 ## Atalhos
 

@@ -127,6 +127,11 @@ pub struct App {
 
     engine: Engine,
     art: ArtLoader,
+    /// A marca do Yasmine, carregada uma vez do PNG embutido no binário.
+    /// Só aparece na tela de boas-vindas — pequena demais e única o
+    /// bastante pra não precisar do sistema de carregamento sob demanda do
+    /// `ArtLoader`.
+    mark: egui::TextureHandle,
 
     /// Índice na `view` da linha selecionada.
     selected: Option<usize>,
@@ -175,9 +180,21 @@ impl App {
             .ok()
             .map(PathBuf::from);
 
+        let mark = {
+            let bytes = include_bytes!("../assets/icon-256.png");
+            let rgba = image::load_from_memory(bytes)
+                .expect("assets/icon-256.png embutido no binário deveria ser válido")
+                .to_rgba8();
+            let size = [rgba.width() as usize, rgba.height() as usize];
+            let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+            cc.egui_ctx
+                .load_texture("marca", color, egui::TextureOptions::LINEAR)
+        };
+
         let mut app = Self {
             ctx: cc.egui_ctx.clone(),
             art: ArtLoader::new(paths.cache.clone()),
+            mark,
             db,
             paths,
             root,
@@ -781,7 +798,12 @@ impl App {
                 // resultado é estado normal de uso, não pede identidade.
                 if self.root.is_none() {
                     let (rect, _) = ui.allocate_exact_size(vec2(80.0, 80.0), Sense::hover());
-                    draw_mark(ui.painter(), rect.center(), 34.0);
+                    ui.painter().image(
+                        self.mark.id(),
+                        rect,
+                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
                     ui.add_space(12.0);
                 }
                 let texto = match self.source {
@@ -1553,61 +1575,6 @@ fn volume_slider(ui: &mut egui::Ui, value: f32) -> Option<f32> {
         return Some(((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0));
     }
     None
-}
-
-/// A marca do Yasmine: cinco pétalas facetadas em torno de um núcleo vazado,
-/// desenhada como vetor — mesma peça que vira `assets/icon-*.png` para o
-/// ícone da janela e do atalho, mas aqui em Rust puro para escalar sem
-/// serrilhado em qualquer tamanho de tela.
-///
-/// Cada pétala é um quadrilátero convexo (`centro, meio-esquerda, ponta,
-/// meio-direita`): o preenchimento do egui só suporta polígono convexo, e um
-/// pentágono com base recuada — como o da versão SVG original — não garante
-/// isso. O núcleo vazado (losango na cor de fundo por cima de tudo) é o que
-/// dá o corte final sem precisar de curva.
-fn draw_mark(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
-    use std::f32::consts::{FRAC_PI_2, TAU};
-
-    const ACCENT_DIM: Color32 = Color32::from_rgb(0x5A, 0x40, 0x99);
-
-    for i in 0..5 {
-        let angle = -FRAC_PI_2 + i as f32 * TAU / 5.0;
-        let (dx, dy) = (angle.cos(), angle.sin());
-        let (px, py) = (-dy, dx);
-
-        let width = radius * 0.42;
-        let notch = 0.55;
-        let mid = pos2(
-            center.x + dx * radius * notch,
-            center.y + dy * radius * notch,
-        );
-        let tip = pos2(center.x + dx * radius, center.y + dy * radius);
-        let mid_l = pos2(mid.x + px * width, mid.y + py * width);
-        let mid_r = pos2(mid.x - px * width, mid.y - py * width);
-
-        let color = if i % 2 == 0 {
-            theme::ACCENT
-        } else {
-            ACCENT_DIM
-        };
-        painter.add(egui::Shape::convex_polygon(
-            vec![center, mid_l, tip, mid_r],
-            color,
-            Stroke::NONE,
-        ));
-    }
-
-    let core = radius * 0.16;
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            pos2(center.x, center.y - core),
-            pos2(center.x + core, center.y),
-            pos2(center.x, center.y + core),
-            pos2(center.x - core, center.y),
-        ],
-        theme::BG,
-        Stroke::NONE,
-    ));
 }
 
 /// Ícones dos alternadores da barra do player.
