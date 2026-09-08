@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
@@ -33,6 +33,55 @@ use crate::watcher::Watcher;
 /// Chave no `meta` onde a pasta escolhida fica guardada, para a próxima
 /// execução abrir direto na biblioteca.
 const META_ROOT: &str = "library_root";
+
+/// Chave no `meta` onde o volume mestre fica guardado entre execuções.
+const META_VOLUME: &str = "volume";
+
+/// Ganho linear a aplicar numa faixa: o do nivelador se já foi medido, 1.0
+/// (sem ajuste) se a tarefa de fundo ainda não chegou nela. Faixa nova nunca
+/// espera a medição para tocar — só ganha o nivelamento na vez seguinte.
+fn track_gain(info: &library::PlaybackInfo) -> f32 {
+    match (info.gain_db, info.peak) {
+        (Some(gain_db), Some(peak)) => {
+            player_audio::linear_gain(player_audio::Loudness { gain_db, peak })
+        }
+        _ => 1.0,
+    }
+}
+
+/// Mede o nivelador de todas as faixas pendentes, em lotes pequenos, numa
+/// conexão própria — roda numa thread de fundo enquanto o app continua
+/// respondendo normalmente (WAL permite a leitura da UI e esta escrita
+/// convivendo).
+///
+/// Faixa que falha ao analisar (arquivo corrompido, formato de borda) recebe
+/// ganho neutro em vez de ficar pendente para sempre: sem isso, um arquivo
+/// ruim faria esta função tentar ele de novo em todo scan, indefinidamente.
+fn run_loudness_fill(db_path: &std::path::Path) {
+    const BATCH: usize = 16;
+
+    let Ok(db) = player_core::Db::open(db_path) else {
+        return;
+    };
+
+    loop {
+        let Ok(batch) = player_core::loudness::pending(&db, BATCH) else {
+            return;
+        };
+        if batch.is_empty() {
+            return;
+        }
+
+        for item in batch {
+            let loudness =
+                player_audio::loudness::analyze(&item.path).unwrap_or(player_audio::Loudness {
+                    gain_db: 0.0,
+                    peak: 1.0,
+                });
+            let _ = player_core::loudness::set(&db, item.id, loudness.gain_db, loudness.peak);
+        }
+    }
+}
 
 /// Tamanho da janela no modo compacto. Largo o bastante pra capa, título,
 /// artista e os três botões de transporte não se atropelarem; nada além.
@@ -102,6 +151,11 @@ pub struct App {
     /// Tamanho da janela antes de entrar no modo compacto, para restaurar
     /// exatamente o que o usuário tinha — não um tamanho padrão qualquer.
     normal_size: egui::Vec2,
+
+    /// Uma tarefa de nivelamento já está rodando em segundo plano. Evita
+    /// empilhar uma tarefa nova a cada rescan enquanto a anterior ainda não
+    /// terminou de cobrir uma biblioteca grande.
+    loudness_running: Arc<AtomicBool>,
 }
 
 impl App {
@@ -147,7 +201,26 @@ impl App {
             focus_search: false,
             mini: false,
             normal_size: vec2(1000.0, 660.0),
+            loudness_running: Arc::new(AtomicBool::new(false)),
         };
+
+        // O volume mestre é a única preferência que o app lembra — e não é
+        // "configuração" no sentido que este projeto evita: é o mesmo tipo
+        // de memória que qualquer player tem, tão básica quanto lembrar a
+        // pasta escolhida.
+        let saved_volume: f32 = app
+            .db
+            .conn()
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                [META_VOLUME],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        app.engine.set_volume(saved_volume);
+
         app.reload();
         match folder {
             // Pasta vinda da linha de comando manda sobre a guardada.
@@ -391,9 +464,37 @@ impl App {
                     elapsed.as_secs_f64()
                 );
                 self.reload();
+                self.spawn_loudness_fill();
             }
             Err(err) => self.status = format!("falha no scan: {err}"),
         }
+    }
+
+    /// Dispara a medição do nivelador para as faixas que ainda não têm,
+    /// se não houver uma rodada já em andamento.
+    ///
+    /// Sequencial, não em paralelo entre núcleos como o hash e o scan: essa
+    /// tarefa compete por CPU com a decodificação de quem estiver tocando
+    /// *agora*, e um glitch audível custa muito mais que terminar de nivelar
+    /// a biblioteca alguns minutos mais cedo.
+    fn spawn_loudness_fill(&self) {
+        if self
+            .loudness_running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+
+        let db_path = self.paths.db.clone();
+        let running = Arc::clone(&self.loudness_running);
+        std::thread::Builder::new()
+            .name("nivelador".into())
+            .spawn(move || {
+                run_loudness_fill(&db_path);
+                running.store(false, Ordering::Release);
+            })
+            .ok();
     }
 
     /// Reage a arquivos que apareceram, sumiram ou mudaram na pasta.
@@ -430,12 +531,13 @@ impl App {
             self.now = None;
             return;
         };
-        let Ok(Some(path)) = library::track_path(&self.db, id) else {
+        let Ok(Some(info)) = library::playback_info(&self.db, id) else {
             self.status = "não encontrei o arquivo dessa faixa".into();
             return;
         };
 
-        self.engine.play(path);
+        let gain = track_gain(&info);
+        self.engine.play(info.path, gain);
         self.adopt_current(id);
     }
 
@@ -451,10 +553,11 @@ impl App {
     /// Entrega a próxima faixa ao motor antes de a atual acabar. Sem isto não
     /// há gapless: o motor precisa abrir o próximo arquivo com antecedência.
     fn queue_next(&mut self) {
-        let next = self
-            .queue
-            .peek_next()
-            .and_then(|id| library::track_path(&self.db, id).ok().flatten());
+        let next = self.queue.peek_next().and_then(|id| {
+            let info = library::playback_info(&self.db, id).ok().flatten()?;
+            let gain = track_gain(&info);
+            Some((info.path, gain))
+        });
         self.engine.set_next(next);
     }
 
@@ -479,6 +582,16 @@ impl App {
         } else {
             self.play_at(self.selected.unwrap_or(0));
         }
+    }
+
+    /// Ajusta o volume mestre e lembra a escolha para a próxima abertura.
+    fn set_volume(&mut self, volume: f32) {
+        self.engine.set_volume(volume);
+        let _ = self.db.conn().execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (META_VOLUME, self.engine.volume().to_string()),
+        );
     }
 
     fn poll_audio(&mut self) {
@@ -911,6 +1024,11 @@ impl App {
                     .font(theme::mono())
                     .color(theme::DIM),
                 );
+
+                ui.add_space(10.0);
+                if let Some(volume) = volume_slider(ui, self.engine.volume()) {
+                    self.set_volume(volume);
+                }
 
                 ui.add_space(10.0);
                 // Alternadores como rótulo aceso/apagado, não como cor: o
@@ -1364,6 +1482,40 @@ fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, col
 
 /// Alternador em texto, no idioma de painel de equipamento: aceso quando
 /// ligado, apagado quando não. Sem cor — cor aqui competiria com o acento.
+/// Controle de volume mestre: uma barrinha preenchida, clique/arraste muda o
+/// valor. Preenchimento em `theme::DIM`, não no acento — o acento significa
+/// uma coisa só neste app (o que está tocando), e volume não é isso.
+///
+/// Devolve o novo valor quando o usuário mexe; `None` quando só está sendo
+/// desenhado sem interação nesta chamada.
+fn volume_slider(ui: &mut egui::Ui, value: f32) -> Option<f32> {
+    let (rect, response) = ui.allocate_exact_size(vec2(52.0, 22.0), Sense::click_and_drag());
+    let painter = ui.painter();
+
+    let bar = Rect::from_center_size(rect.center(), vec2(rect.width(), 3.0));
+    painter.rect_filled(bar, CornerRadius::ZERO, theme::RULE);
+    if value > 0.0 {
+        painter.rect_filled(
+            Rect::from_min_size(
+                bar.left_top(),
+                vec2(bar.width() * value.clamp(0.0, 1.0), bar.height()),
+            ),
+            CornerRadius::ZERO,
+            if response.hovered() {
+                theme::TEXT
+            } else {
+                theme::DIM
+            },
+        );
+    }
+
+    if response.clicked() || response.dragged() {
+        let pointer = response.interact_pointer_pos()?;
+        return Some(((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
+    }
+    None
+}
+
 fn toggle(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),

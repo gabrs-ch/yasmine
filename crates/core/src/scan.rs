@@ -505,8 +505,13 @@ impl<'tx> Writer<'tx> {
         let now = now_ms();
         let id = if let Some(id) = existing {
             self.tx.execute(
+                // O conteúdo pode ter mudado (mesmo caminho, arquivo
+                // reeditado): hash e nivelador refletiam o áudio antigo, e
+                // ficam NULL até a próxima medição — hash sob demanda,
+                // nivelador na próxima passada da tarefa de fundo.
                 "UPDATE track SET
                      file_size = ?2, mtime_ns = ?3, content_hash = NULL,
+                     loudness_gain_db = NULL, loudness_peak = NULL,
                      title = ?4, album_id = ?5, artist_id = ?6, album_artist_id = ?7,
                      disc_no = ?8, track_no = ?9, year = ?10, genre = ?11, art_id = ?12,
                      duration_ms = ?13, sample_rate = ?14, channels = ?15, bit_depth = ?16,

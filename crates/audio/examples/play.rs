@@ -1,10 +1,12 @@
 //! Toca arquivos de verdade no dispositivo de verdade e relata o que aconteceu.
 //!
 //! Passando mais de um arquivo, o segundo é emendado no primeiro pelo caminho
-//! do gapless — é o teste que interessa.
+//! do gapless — é o teste que interessa. `arquivo=ganho` aplica um ganho
+//! linear específico àquela faixa — útil para verificar que o nivelador
+//! troca de valor exatamente na transição gapless, não antes nem depois.
 //!
 //! ```text
-//! cargo run --release -p player-audio --example play -- a.mp3 b.mp3
+//! cargo run --release -p player-audio --example play -- a.mp3=1.0 b.mp3=0.3
 //! ```
 
 use std::path::PathBuf;
@@ -12,14 +14,21 @@ use std::time::{Duration, Instant};
 
 use player_audio::{Engine, Event};
 
+fn parse_arg(arg: &str) -> (PathBuf, f32) {
+    arg.rsplit_once('=').map_or_else(
+        || (PathBuf::from(arg), 1.0),
+        |(path, gain)| (PathBuf::from(path), gain.parse().unwrap_or(1.0)),
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let files: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
+    let files: Vec<(PathBuf, f32)> = std::env::args().skip(1).map(|a| parse_arg(&a)).collect();
     if files.is_empty() {
-        return Err("uso: play <arquivo> [próximo…]".into());
+        return Err("uso: play <arquivo>[=ganho] [próximo…]".into());
     }
 
     let engine = Engine::new();
-    engine.play(files[0].clone());
+    engine.play(files[0].0.clone(), files[0].1);
 
     let mut fila = files[1..].iter().cloned();
     engine.set_next(fila.next());

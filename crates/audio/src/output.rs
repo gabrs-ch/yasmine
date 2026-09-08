@@ -22,7 +22,7 @@ use crate::{Error, Result};
 ///
 /// Tudo atômico, nada de `Mutex`: a UI lê isso a cada frame e o callback
 /// escreve em tempo real.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Shared {
     /// Portão do callback: só é ligado quando o ring já tem áudio. Começar com
     /// o buffer vazio produz um underrun logo no primeiro callback.
@@ -44,6 +44,32 @@ pub struct Shared {
     /// O callback pediu áudio e o ring estava vazio. Sintoma de worker lento
     /// ou ring curto demais.
     pub starved: AtomicBool,
+    /// Volume mestre, ajustado pelo usuário. Bits de um `f32` em `[0, 1]`.
+    pub master_volume: AtomicU32,
+    /// Ganho do nivelador para a faixa que está tocando agora, já resolvido
+    /// em linear (ver `loudness::linear_gain`). Bits de um `f32`. Troca no
+    /// instante exato em que uma faixa emendada começa a soar de verdade —
+    /// mesmo ponto em que `duration_ms` troca no `engine::Worker`.
+    pub track_gain: AtomicU32,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self {
+            playing: AtomicBool::default(),
+            intent: AtomicBool::default(),
+            frames_played: AtomicU64::default(),
+            sample_rate: AtomicU32::default(),
+            duration_ms: AtomicU64::default(),
+            flush_gen: AtomicU64::default(),
+            flush_ack: AtomicU64::default(),
+            starved: AtomicBool::default(),
+            // Ganho neutro por padrão: sem isso, uma faixa tocaria muda até
+            // a UI ou o worker terem a chance de fixar o valor de verdade.
+            master_volume: AtomicU32::new(1.0f32.to_bits()),
+            track_gain: AtomicU32::new(1.0f32.to_bits()),
+        }
+    }
 }
 
 /// Quanto áudio o ring segura. Meio segundo é folga suficiente para o worker
@@ -174,8 +200,16 @@ where
             chunk.commit_all();
         }
 
+        // Um load cada, uma vez por callback — não por amostra. Combina
+        // volume mestre e ganho do nivelador da faixa atual num só multiply.
+        // O clamp final é rede de segurança, não o limitador de verdade: o
+        // volume mestre nunca passa de 1 e o ganho da faixa já vem travado
+        // no pico calculado (loudness::linear_gain); ele só entra em cena se
+        // alguma dessas garantias falhar.
+        let gain = f32::from_bits(shared.master_volume.load(Ordering::Relaxed))
+            * f32::from_bits(shared.track_gain.load(Ordering::Relaxed));
         for (slot, sample) in out.iter_mut().zip(&scratch[..take]) {
-            *slot = T::from_sample(*sample);
+            *slot = T::from_sample((*sample * gain).clamp(-1.0, 1.0));
         }
         // 4. Faltou áudio: completa com silêncio em vez de repetir o buffer
         //    anterior, que é o que produz o zumbido clássico de underrun.

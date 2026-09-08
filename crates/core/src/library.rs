@@ -163,15 +163,34 @@ pub fn rows(db: &Db, ids: &[TrackId]) -> Result<Vec<TrackRow>> {
     Ok(ids.iter().filter_map(|id| by_id.remove(&id.0)).collect())
 }
 
-/// Caminho absoluto de uma faixa, para entregar ao decodificador.
-pub fn track_path(db: &Db, id: TrackId) -> Result<Option<PathBuf>> {
+/// O que o motor de áudio precisa para tocar uma faixa: o caminho, e o
+/// ganho do nivelador se já foi calculado.
+///
+/// `gain_db`/`peak` vêm `None` até uma tarefa de fundo medir a faixa (ver
+/// `player_audio::loudness`) — tocar não pode esperar por isso, então a
+/// ausência não é erro, é "ainda sem ajuste", e quem chama decide o ganho
+/// neutro nesse caso.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaybackInfo {
+    pub path: PathBuf,
+    pub gain_db: Option<f32>,
+    pub peak: Option<f32>,
+}
+
+/// Caminho e dados do nivelador de uma faixa, para entregar ao motor de áudio.
+pub fn playback_info(db: &Db, id: TrackId) -> Result<Option<PlaybackInfo>> {
     let mut stmt = db.conn().prepare_cached(
-        "SELECT r.path, t.rel_path FROM track t
+        "SELECT r.path, t.rel_path, t.loudness_gain_db, t.loudness_peak
+         FROM track t
          JOIN library_root r ON r.id = t.root_id
          WHERE t.id = ?1",
     )?;
     let mut found = stmt.query_map([id.0], |row| {
-        Ok(PathBuf::from(row.get::<_, String>(0)?).join(row.get::<_, String>(1)?))
+        Ok(PlaybackInfo {
+            path: PathBuf::from(row.get::<_, String>(0)?).join(row.get::<_, String>(1)?),
+            gain_db: row.get(2)?,
+            peak: row.get(3)?,
+        })
     })?;
     found.next().transpose().map_err(Into::into)
 }
@@ -301,13 +320,27 @@ mod tests {
     }
 
     #[test]
-    fn track_path_aponta_para_um_arquivo_existente() {
+    fn playback_info_aponta_para_um_arquivo_existente() {
         let (db, _env) = biblioteca("caminho");
         let ids = view(&db, Sort::ArtistAlbum).expect("view");
-        let path = track_path(&db, ids[0])
-            .expect("consultar caminho")
+        let info = playback_info(&db, ids[0])
+            .expect("consultar")
             .expect("faixa existe");
-        assert!(path.is_file(), "{} não existe", path.display());
+        assert!(info.path.is_file(), "{} não existe", info.path.display());
+    }
+
+    /// Antes de qualquer análise de fundo rodar, o nivelador ainda não tem
+    /// dado — quem chama precisa saber disso pra decidir o ganho neutro, em
+    /// vez de receber um zero que pareceria "medido e é isto mesmo".
+    #[test]
+    fn playback_info_comeca_sem_dados_do_nivelador() {
+        let (db, _env) = biblioteca("sem-nivelador");
+        let ids = view(&db, Sort::ArtistAlbum).expect("view");
+        let info = playback_info(&db, ids[0])
+            .expect("consultar")
+            .expect("faixa existe");
+        assert_eq!(info.gain_db, None);
+        assert_eq!(info.peak, None);
     }
 
     #[test]

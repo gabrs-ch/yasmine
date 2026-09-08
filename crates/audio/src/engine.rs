@@ -58,15 +58,31 @@ impl Engine {
         }
     }
 
-    /// Toca `path` do começo, descartando o que estiver tocando.
-    pub fn play(&self, path: PathBuf) {
-        self.send(Command::Play(path));
+    /// Toca `path` do começo, descartando o que estiver tocando. `gain` é o
+    /// ganho linear do nivelador para esta faixa (1.0 = sem ajuste) — ver
+    /// `loudness::linear_gain`.
+    pub fn play(&self, path: PathBuf, gain: f32) {
+        self.send(Command::Play(path, gain));
     }
 
-    /// Diz qual faixa vem depois. É isto que faz o gapless: o worker abre a
-    /// próxima antes de a atual acabar e continua enchendo o mesmo ring.
-    pub fn set_next(&self, path: Option<PathBuf>) {
-        self.send(Command::SetNext(path));
+    /// Diz qual faixa vem depois, com o ganho dela. É isto que faz o
+    /// gapless: o worker abre a próxima antes de a atual acabar e continua
+    /// enchendo o mesmo ring.
+    pub fn set_next(&self, next: Option<(PathBuf, f32)>) {
+        self.send(Command::SetNext(next));
+    }
+
+    /// Volume mestre, `[0, 1]`. Escrita direta no átomo: o callback lê a
+    /// qualquer momento, não precisa passar pela fila de comandos do worker.
+    pub fn set_volume(&self, volume: f32) {
+        self.shared
+            .master_volume
+            .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.shared.master_volume.load(Ordering::Relaxed))
     }
 
     pub fn pause(&self) {
@@ -132,7 +148,7 @@ enum Tail {
     Finish,
     /// Próxima faixa em outra taxa de amostragem. Não dá pra emendar sem
     /// reamostrar, então espera o ring esvaziar e reabre o dispositivo.
-    Deferred(Box<TrackDecoder>, PathBuf),
+    Deferred(Box<TrackDecoder>, PathBuf, f32),
 }
 
 /// Uma faixa que já está no ring mas ainda não começou a sair pelo alto-falante.
@@ -140,6 +156,9 @@ struct Queued {
     start_frame: u64,
     path: PathBuf,
     duration: Option<Duration>,
+    /// Ganho do nivelador desta faixa — só passa a valer em `check_advance`,
+    /// no instante exato em que ela começa a soar de verdade.
+    gain: f32,
 }
 
 struct Worker {
@@ -151,8 +170,8 @@ struct Worker {
     decoder: Option<TrackDecoder>,
     converter: Option<Converter>,
 
-    /// Faixa a tocar depois desta.
-    next: Option<PathBuf>,
+    /// Faixa a tocar depois desta, com o ganho dela.
+    next: Option<(PathBuf, f32)>,
     /// Samples já convertidos, esperando espaço no ring.
     pending: Vec<f32>,
     pending_at: usize,
@@ -202,12 +221,12 @@ impl Worker {
 
     fn handle(&mut self, command: Command) {
         match command {
-            Command::Play(path) => {
-                if let Err(err) = self.start(&path) {
+            Command::Play(path, gain) => {
+                if let Err(err) = self.start(&path, gain) {
                     self.emit(Event::Error(err.to_string()));
                 }
             }
-            Command::SetNext(path) => self.next = path,
+            Command::SetNext(next) => self.next = next,
             Command::Pause => self.wants_play = false,
             Command::Resume => self.wants_play = true,
             Command::Stop => {
@@ -246,7 +265,7 @@ impl Worker {
     }
 
     /// Começa uma faixa do zero, reabrindo o dispositivo se o formato pedir.
-    fn start(&mut self, path: &Path) -> Result<()> {
+    fn start(&mut self, path: &Path, gain: f32) -> Result<()> {
         let decoder = TrackDecoder::open(path)?;
         let spec = decoder.spec();
 
@@ -271,6 +290,13 @@ impl Worker {
             Ordering::Relaxed,
         );
         self.shared.frames_played.store(0, Ordering::Relaxed);
+        // Sem fila gapless envolvida aqui: a faixa começa a ser decodificada
+        // agora e vai direto pro ring, então o ganho vale desde a primeira
+        // amostra — ao contrário do gapless, onde ele só troca em
+        // `check_advance`.
+        self.shared
+            .track_gain
+            .store(gain.to_bits(), Ordering::Relaxed);
 
         self.decoder = Some(decoder);
         self.pending.clear();
@@ -369,7 +395,7 @@ impl Worker {
         self.decoder = None;
         self.converter = None;
 
-        let Some(path) = self.next.take() else {
+        let Some((path, gain)) = self.next.take() else {
             self.tail = Some(Tail::Finish);
             return;
         };
@@ -397,6 +423,7 @@ impl Worker {
                     start_frame: played + frames_in_ring,
                     path,
                     duration: decoder.duration(),
+                    gain,
                 });
                 self.converter = Some(Converter::new(spec, output_spec));
                 self.decoder = Some(decoder);
@@ -404,7 +431,7 @@ impl Worker {
             // Taxa diferente: emendar exigiria reamostrar a faixa nova, que é
             // exatamente o que se quis evitar. Deixa a atual terminar e reabre
             // o dispositivo na taxa certa.
-            _ => self.tail = Some(Tail::Deferred(Box::new(decoder), path)),
+            _ => self.tail = Some(Tail::Deferred(Box::new(decoder), path, gain)),
         }
     }
 
@@ -419,7 +446,7 @@ impl Worker {
                 self.wants_play = false;
                 self.emit(Event::Finished);
             }
-            Some(Tail::Deferred(decoder, path)) => {
+            Some(Tail::Deferred(decoder, path, gain)) => {
                 let spec = decoder.spec();
                 self.output = None;
                 match Output::open(spec, &self.shared) {
@@ -435,6 +462,9 @@ impl Worker {
                             Ordering::Relaxed,
                         );
                         self.shared.frames_played.store(0, Ordering::Relaxed);
+                        self.shared
+                            .track_gain
+                            .store(gain.to_bits(), Ordering::Relaxed);
                         self.track_start = 0;
                         self.primed = false;
                         self.decoder = Some(*decoder);
@@ -466,6 +496,12 @@ impl Worker {
                 queued.duration.map_or(0, |d| d.as_millis() as u64),
                 Ordering::Relaxed,
             );
+            // O ganho troca no mesmo instante que a duração: é aqui, e só
+            // aqui, que a faixa emendada passa a soar de verdade — antes
+            // disso o que está saindo pelo alto-falante ainda é a anterior.
+            self.shared
+                .track_gain
+                .store(queued.gain.to_bits(), Ordering::Relaxed);
             // A posição é relativa à faixa, não ao dispositivo.
             self.shared
                 .frames_played

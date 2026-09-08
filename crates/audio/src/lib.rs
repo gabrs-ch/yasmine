@@ -26,6 +26,7 @@
 pub mod convert;
 pub mod decode;
 pub mod engine;
+pub mod loudness;
 pub mod output;
 
 use std::path::PathBuf;
@@ -33,6 +34,7 @@ use std::time::Duration;
 
 pub use decode::{Spec, TrackDecoder};
 pub use engine::Engine;
+pub use loudness::{Loudness, linear_gain};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -59,12 +61,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// O que a UI pode pedir. Fronteira estreita de propósito: mantém o worker
 /// substituível e o callback de áudio livre de estado da UI.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `f32` no lugar de `Eq`: `Play`/`SetNext` carregam o ganho do nivelador já
+/// resolvido em linear (`loudness::linear_gain`). Quem chama (o app) é quem
+/// sabe o `gain_db`/pico de cada faixa no índice — o motor só aplica.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    Play(PathBuf),
-    /// Qual faixa vem depois. É o que permite o gapless: o worker abre a
-    /// próxima antes de a atual acabar.
-    SetNext(Option<PathBuf>),
+    /// Caminho e ganho linear a aplicar (1.0 = sem ajuste).
+    Play(PathBuf, f32),
+    /// Qual faixa vem depois, com o ganho dela. É o que permite o gapless: o
+    /// worker abre a próxima antes de a atual acabar.
+    SetNext(Option<(PathBuf, f32)>),
     Pause,
     Resume,
     Stop,

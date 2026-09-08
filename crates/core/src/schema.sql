@@ -92,6 +92,16 @@ CREATE TABLE track (
     codec        TEXT,
     bitrate_kbps INTEGER,
 
+    -- Nivelador de volume, preguiçoso como content_hash: NULL até uma
+    -- tarefa de fundo (não o scan, que precisa ficar rápido) decodificar a
+    -- faixa e medir. `loudness_peak` existe para nunca deixar o ganho
+    -- estourar 0 dBFS numa faixa gravada baixo mas com picos altos — ver
+    -- `player_audio::loudness`. Colunas chegam via migração (db.rs
+    -- SCHEMA_VERSION 2), não estão aqui: fresh install e upgrade passam
+    -- pelo mesmo ALTER TABLE, sem duplicar a lógica de criação.
+    -- loudness_gain_db REAL,
+    -- loudness_peak    REAL,
+
     scanned_at INTEGER NOT NULL,
 
     UNIQUE (root_id, rel_path)

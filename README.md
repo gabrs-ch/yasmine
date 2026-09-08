@@ -82,11 +82,36 @@ enxuto. Existe `ksni` (implementação pura em D-Bus, sem GTK) como alternativa
 mais tarde; por ora, o modo compacto (`Ctrl+M`) cobre o caso de uso de "ficar
 tocando ocupando pouco espaço" sem a dependência.
 
+**Nivelador de volume por RMS, não EBU R128/ReplayGain de verdade.** A medida
+"correta" de volume percebido usa filtro de ponderação-K e gating de trechos
+silenciosos (ITU-R BS.1770) — implementar esse filtro do zero é boa parte do
+trabalho de uma biblioteca de áudio inteira, para um ganho de precisão que não
+muda a decisão prática. RMS do sinal decodificado já resolve "essa faixa é
+gravada mais baixo que as outras" na esmagadora maioria dos casos, com uma
+fração do código. O ganho final nunca passa de `1 / pico` medido na faixa —
+sem isso, uma faixa gravada baixo mas com transientes agudos receberia o
+ganho cheio do RMS e estouraria 0 dBFS nesses trechos. Ver
+[`loudness.rs`](crates/audio/src/loudness.rs).
+
+**Medição em segundo plano roda sequencial, não em paralelo entre núcleos.**
+Ao contrário do hash (BLAKE3, ~1–3 GB/s, insignificante mesmo saturando todos
+os núcleos), decodificar áudio é caro, e essa tarefa pode rodar por minutos
+enquanto o usuário ouve música ao mesmo tempo. Um fan-out em todos os núcleos
+competiria com a decodificação da faixa que está tocando *agora*, e um
+glitch audível custa muito mais que terminar de nivelar a biblioteca alguns
+minutos mais cedo. Faixa nova toca sem nivelamento até a tarefa de fundo
+chegar nela — nunca espera a medição para começar a tocar.
+
+**Volume mestre é a única preferência que o app lembra entre sessões.** Não é
+"configuração" no sentido que este projeto evita — é o mesmo tipo de memória
+que a pasta escolhida já tinha: básico o bastante para não contar como opção
+exposta, só como o app lembrando o que você já tinha ajustado.
+
 ## Fases
 
 - [x] **0 — Fundamentos.** Workspace, schema, clippy/fmt no CI, gerador de biblioteca.
 - [x] **1 — Player PC.** Pasta → scan → índice → tocar. Lista, play/pause/next/prev, busca, seek.
-- [x] **2 — Polimento PC.** Fila, playlists, shuffle/repeat, atalhos, modo compacto, `notify`, profiling.
+- [x] **2 — Polimento PC.** Fila, playlists, shuffle/repeat, atalhos, modo compacto, `notify`, nivelador de volume, profiling.
 - [ ] **3 — Android standalone.** Compose + `core` via uniffi.
 - [ ] **4 — Sync na LAN.** QR → mDNS → Noise → diff por hash.
 - [ ] **5 — Refinamento.** Profiling real, biblioteca grande, onboarding.
@@ -160,6 +185,12 @@ barra do player e no modo compacto.
 
 A sidebar de playlists segue a mesma linguagem: linha plana, marca de acento
 de 2px em quem está ativo — biblioteca ou uma playlist, nunca as duas.
+
+O controle de volume mestre é uma barra fina igual à de progresso, mas em
+cinza neutro, não no acento — o acento continua significando uma coisa só
+("é isto que está tocando"), e volume não é isso. Não aparece no modo
+compacto: a largura de 340px já está no limite só com capa, texto e
+transporte.
 
 ## Atalhos
 

@@ -5,7 +5,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 /// Versão do schema gravada em `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
@@ -103,6 +103,16 @@ impl Db {
         let tx = self.conn.transaction()?;
         if version < 1 {
             tx.execute_batch(SCHEMA_SQL)?;
+        }
+        if version < 2 {
+            // Nivelador de volume: ganho e pico calculados uma vez por
+            // faixa (ver `player_audio::loudness`), preguiçoso como o
+            // content_hash — nasce NULL, uma tarefa de fundo preenche depois
+            // do scan sem atrasar a lista ficar pronta.
+            tx.execute_batch(
+                "ALTER TABLE track ADD COLUMN loudness_gain_db REAL;
+                 ALTER TABLE track ADD COLUMN loudness_peak REAL;",
+            )?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
