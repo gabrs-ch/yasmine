@@ -186,11 +186,24 @@ barra do player e no modo compacto.
 A sidebar de playlists segue a mesma linguagem: linha plana, marca de acento
 de 2px em quem está ativo — biblioteca ou uma playlist, nunca as duas.
 
-O controle de volume mestre é uma barra fina igual à de progresso, mas em
-cinza neutro, não no acento — o acento continua significando uma coisa só
-("é isto que está tocando"), e volume não é isso. Não aparece no modo
-compacto: a largura de 340px já está no limite só com capa, texto e
-transporte.
+O controle de volume mestre é a única exceção deliberada aos cantos retos:
+trilho em pílula com uma bolinha arrastável, no espírito do slider do Apple
+Music — um controle contínuo se lê melhor como objeto físico do que como
+dado tabular, e fica contido a este widget só. Cor neutra, não o acento
+— volume não é "o que está tocando". Não aparece no modo compacto: a
+largura de 340px já está no limite só com capa, texto e transporte.
+
+MINI, SHUF e RPT são ícone, não texto — mesma razão do transporte (Fase 1):
+forma vetorial garante o traço nítido, sem depender de a fonte do sistema
+ter o símbolo certo.
+
+**A marca do Yasmine** é cinco pétalas facetadas em torno de um núcleo
+vazado — cantos retos, sem curva, para caber na mesma linguagem visual do
+resto da interface. Existe em dois formatos que não se duplicam por acaso:
+[`assets/mark.svg`](crates/pc-app/assets/mark.svg) é a origem, rasterizada
+uma vez para o ícone da janela e do atalho; `draw_mark()` reimplementa a
+mesma geometria em Rust puro para a tela de boas-vindas do app, porque
+vetor escala sem serrilhado e raster não.
 
 ## Atalhos
 
