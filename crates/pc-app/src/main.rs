@@ -6,6 +6,7 @@
 mod app;
 mod art;
 mod paths;
+mod queue;
 mod theme;
 
 use eframe::egui;

@@ -24,6 +24,7 @@ use player_core::{ArtCache, Db, TrackId};
 
 use crate::art::ArtLoader;
 use crate::paths::Paths;
+use crate::queue::{Queue, Repeat};
 use crate::theme;
 
 /// Chave no `meta` onde a pasta escolhida fica guardada, para a próxima
@@ -49,9 +50,14 @@ pub struct App {
     engine: Engine,
     art: ArtLoader,
 
-    /// Índice na `view` da faixa selecionada e da faixa tocando.
+    /// Índice na `view` da linha selecionada.
     selected: Option<usize>,
-    playing: Option<usize>,
+    queue: Queue,
+    /// Faixa tocando, por id — **não** por índice.
+    ///
+    /// A fila e a lista visível divergem assim que o usuário busca algo, e um
+    /// índice guardado passaria a apontar para outra faixa. O id não.
+    now_id: Option<TrackId>,
     now: Option<TrackRow>,
 
     scan: Option<ScanJob>,
@@ -87,7 +93,8 @@ impl App {
             stats: Stats::default(),
             engine: Engine::new(),
             selected: None,
-            playing: None,
+            queue: Queue::default(),
+            now_id: None,
             now: None,
             scan: None,
             status: String::new(),
@@ -117,8 +124,6 @@ impl App {
     fn reload(&mut self) {
         self.view = library::search(&self.db, &self.query, self.sort).unwrap_or_default();
         self.stats = library::stats(&self.db).unwrap_or_default();
-        // A faixa tocando pode ter mudado de posição na lista filtrada.
-        self.playing = self.playing.filter(|&index| index < self.view.len());
     }
 
     /// Aponta a biblioteca para `folder`, guarda a escolha e escaneia.
@@ -132,7 +137,8 @@ impl App {
         // contagem de faixas soma bibliotecas que o usuário não vê mais.
         let _ = player_core::keep_only_root(&self.db, &folder);
         self.root = Some(folder.clone());
-        self.playing = None;
+        self.queue.clear();
+        self.now_id = None;
         self.now = None;
         self.selected = None;
         self.engine.stop();
@@ -214,8 +220,21 @@ impl App {
     // Playback
     // -------------------------------------------------------------------------
 
+    /// Toca a partir de uma linha da lista, enfileirando o que está à vista.
+    ///
+    /// A fila vira uma cópia da view inteira — 12 bytes por faixa, 600 KB para
+    /// 50 000. Barato o suficiente para não valer a pena ser esperto.
     fn play_at(&mut self, index: usize) {
-        let Some(&id) = self.view.get(index) else {
+        self.queue.replace(self.view.clone(), index);
+        self.start_current();
+    }
+
+    /// Toca o que o cursor da fila aponta.
+    fn start_current(&mut self) {
+        let Some(id) = self.queue.current() else {
+            self.engine.stop();
+            self.now_id = None;
+            self.now = None;
             return;
         };
         let Ok(Some(path)) = library::track_path(&self.db, id) else {
@@ -224,7 +243,12 @@ impl App {
         };
 
         self.engine.play(path);
-        self.playing = Some(index);
+        self.adopt_current(id);
+    }
+
+    /// Atualiza o que a barra do player mostra e engata a faixa seguinte.
+    fn adopt_current(&mut self, id: TrackId) {
+        self.now_id = Some(id);
         self.now = library::rows(&self.db, &[id])
             .ok()
             .and_then(|mut rows| rows.pop());
@@ -235,19 +259,21 @@ impl App {
     /// há gapless: o motor precisa abrir o próximo arquivo com antecedência.
     fn queue_next(&mut self) {
         let next = self
-            .playing
-            .and_then(|index| self.view.get(index + 1))
-            .and_then(|&id| library::track_path(&self.db, id).ok().flatten());
+            .queue
+            .peek_next()
+            .and_then(|id| library::track_path(&self.db, id).ok().flatten());
         self.engine.set_next(next);
     }
 
-    fn step(&mut self, delta: isize) {
-        let Some(current) = self.playing else {
-            return;
-        };
-        let target = current as isize + delta;
-        if target >= 0 && (target as usize) < self.view.len() {
-            self.play_at(target as usize);
+    fn next_track(&mut self) {
+        if self.queue.advance().is_some() {
+            self.start_current();
+        }
+    }
+
+    fn prev_track(&mut self) {
+        if self.queue.previous().is_some() {
+            self.start_current();
         }
     }
 
@@ -255,10 +281,10 @@ impl App {
         let state = self.engine.state();
         if state.playing {
             self.engine.pause();
-        } else if self.playing.is_some() {
+        } else if self.now_id.is_some() && !self.queue.is_empty() {
             self.engine.resume();
-        } else if let Some(index) = self.selected.or(Some(0)) {
-            self.play_at(index);
+        } else {
+            self.play_at(self.selected.unwrap_or(0));
         }
     }
 
@@ -268,16 +294,14 @@ impl App {
                 // A emenda já aconteceu no motor; aqui só acompanhamos o
                 // índice e engatamos a faixa seguinte.
                 Event::Advanced { .. } => {
-                    self.playing = self.playing.map(|index| index + 1);
-                    self.now = self
-                        .playing
-                        .and_then(|index| self.view.get(index).copied())
-                        .and_then(|id| library::rows(&self.db, &[id]).ok())
-                        .and_then(|mut rows| rows.pop());
-                    self.queue_next();
+                    // O motor já emendou; aqui a fila só acompanha.
+                    self.queue.advance();
+                    if let Some(id) = self.queue.current() {
+                        self.adopt_current(id);
+                    }
                 }
                 Event::Finished => {
-                    self.playing = None;
+                    self.now_id = None;
                     self.now = None;
                 }
                 Event::Error(err) => self.status = err,
@@ -404,7 +428,7 @@ impl App {
                     let (rect, response) =
                         ui.allocate_exact_size(vec2(width, theme::ROW_HEIGHT), Sense::click());
 
-                    let is_playing = self.playing == Some(index);
+                    let is_playing = self.now_id == Some(row.id);
                     let is_selected = self.selected == Some(index);
                     let painter = ui.painter();
 
@@ -547,6 +571,14 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(10.0);
+                if let Some(position) = self.queue.position() {
+                    ui.label(
+                        egui::RichText::new(format!("{position} / {}", self.queue.len()))
+                            .font(theme::mono())
+                            .color(theme::FAINT),
+                    );
+                    ui.add_space(10.0);
+                }
                 ui.label(
                     egui::RichText::new(format!(
                         "{} / {}",
@@ -560,8 +592,26 @@ impl App {
                 );
 
                 ui.add_space(10.0);
+                // Alternadores como rótulo aceso/apagado, não como cor: o
+                // acento continua significando "é isto que está tocando".
+                let repeat_label = match self.queue.repeat() {
+                    Repeat::Off | Repeat::All => "RPT",
+                    Repeat::One => "RPT 1",
+                };
+                if toggle(ui, repeat_label, self.queue.repeat() != Repeat::Off).clicked() {
+                    let mode = self.queue.repeat().next();
+                    self.queue.set_repeat(mode);
+                    self.queue_next();
+                }
+                if toggle(ui, "SHUF", self.queue.shuffle()).clicked() {
+                    let on = !self.queue.shuffle();
+                    self.queue.set_shuffle(on);
+                    self.queue_next();
+                }
+
+                ui.add_space(10.0);
                 if transport(ui, Glyph::Next).clicked() {
-                    self.step(1);
+                    self.next_track();
                 }
                 if transport(
                     ui,
@@ -576,7 +626,7 @@ impl App {
                     self.toggle_play();
                 }
                 if transport(ui, Glyph::Prev).clicked() {
-                    self.step(-1);
+                    self.prev_track();
                 }
             });
         });
@@ -628,18 +678,38 @@ impl App {
             return;
         }
 
-        let (space, enter, down, up, find) = ctx.input(|i| {
+        let (space, enter, down, up, find, shuffle, repeat, next, prev) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
                 i.key_pressed(egui::Key::Enter),
                 i.key_pressed(egui::Key::ArrowDown),
                 i.key_pressed(egui::Key::ArrowUp),
                 i.modifiers.command && i.key_pressed(egui::Key::F),
+                i.key_pressed(egui::Key::S),
+                i.key_pressed(egui::Key::R),
+                i.key_pressed(egui::Key::ArrowRight),
+                i.key_pressed(egui::Key::ArrowLeft),
             )
         });
 
         if space {
             self.toggle_play();
+        }
+        if shuffle {
+            let on = !self.queue.shuffle();
+            self.queue.set_shuffle(on);
+            self.queue_next();
+        }
+        if repeat {
+            let mode = self.queue.repeat().next();
+            self.queue.set_repeat(mode);
+            self.queue_next();
+        }
+        if next {
+            self.next_track();
+        }
+        if prev {
+            self.prev_track();
         }
         if find {
             self.focus_search = true;
@@ -784,6 +854,48 @@ fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, col
         galley,
         color,
     );
+}
+
+/// Alternador em texto, no idioma de painel de equipamento: aceso quando
+/// ligado, apagado quando não. Sem cor — cor aqui competiria com o acento.
+fn toggle(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        theme::mono(),
+        if active { theme::TEXT } else { theme::FAINT },
+    );
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(galley.size().x + 12.0, 26.0), Sense::click());
+
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+    }
+    let color = if active {
+        theme::TEXT
+    } else if response.hovered() {
+        theme::DIM
+    } else {
+        theme::FAINT
+    };
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        theme::mono(),
+        color,
+    );
+    // Sublinhado de 1px marca o estado ligado sem gastar cor.
+    if active {
+        ui.painter().line_segment(
+            [
+                pos2(rect.left() + 6.0, rect.bottom() - 5.0),
+                pos2(rect.right() - 6.0, rect.bottom() - 5.0),
+            ],
+            Stroke::new(1.0, theme::TEXT),
+        );
+    }
+    response
 }
 
 #[derive(Clone, Copy)]
