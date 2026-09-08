@@ -12,10 +12,9 @@ mod watcher;
 
 use eframe::egui;
 
-/// A marca do Yasmine: cinco pétalas facetadas (cantos retos, sem curva —
-/// mesma linguagem visual do resto da interface), gerada a partir de
-/// `assets/mark.svg`. Embutida no binário: é um ícone, não algo que o
-/// usuário troca, então não precisa viver solto no disco.
+/// A marca do Yasmine — arte fornecida pelo usuário, PNG único. Embutida no
+/// binário: é um ícone, não algo que o usuário troca, então não precisa
+/// viver solto no disco.
 fn load_icon() -> egui::IconData {
     let bytes = include_bytes!("../assets/icon-256.png");
     let image = image::load_from_memory(bytes)
@@ -40,7 +39,16 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([1000.0, 660.0])
             .with_min_inner_size(app::NORMAL_MIN_SIZE)
             .with_title("Yasmine")
-            .with_icon(load_icon()),
+            .with_icon(load_icon())
+            // Sem decoração do gerenciador de janelas: no Linux, cada
+            // ambiente desenha um cabeçalho diferente (cinza claro no
+            // XFCE, escuro em outros) que nada no app controla — colado
+            // direto num conteúdo quase preto, era a costura mais feia da
+            // janela inteira. A barra de comando (`app::App::top_bar`) vira
+            // a barra de título também: arrasta, dá duplo clique pra
+            // maximizar, tem os próprios botões de minimizar/maximizar/
+            // fechar, no mesmo traço do resto da interface.
+            .with_decorations(false),
         // glow, não wgpu: o contexto sobe mais rápido e o binário carrega
         // menos dependência. Aparece direto no tempo até a janela existir.
         renderer: eframe::Renderer::Glow,

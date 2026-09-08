@@ -11,6 +11,74 @@
 
 use eframe::egui::{self, Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle};
 
+/// Fonte de ícones — [Lucide](https://lucide.dev) (ISC, licença em
+/// `assets/LUCIDE-LICENSE.txt`), embutida como qualquer outro asset do
+/// binário. Mesma razão dos ícones que ela substituiu (desenhados à mão,
+/// linha por linha): o traço não pode depender de o sistema ter, ou não, o
+/// glifo certo. Um arquivo só resolve todo ícone da interface — bem mais
+/// consistente (e bonito) que reinventar cada forma em `Painter::line`.
+const LUCIDE_TTF: &[u8] = include_bytes!("../assets/lucide.ttf");
+
+/// Fontes de texto — [Inter](https://rsms.me/inter) (OFL,
+/// `assets/INTER-LICENSE.txt`) no lugar da fonte padrão que o `egui` já traz
+/// embutida. A fonte padrão existe pra rodar em qualquer lugar sem precisar
+/// de asset nenhum — mas "roda em qualquer lugar" e "bonita" são objetivos
+/// diferentes, e só dá pra ter os dois embutindo a nossa. Regular pro corpo
+/// do texto, SemiBold pro título de faixa — peso de verdade, não a faixa
+/// desenhada duas vezes com deslocamento que fazia esse papel antes.
+const INTER_REGULAR_TTF: &[u8] = include_bytes!("../assets/Inter-Regular.ttf");
+const INTER_SEMIBOLD_TTF: &[u8] = include_bytes!("../assets/Inter-SemiBold.ttf");
+/// Números — duração, faixa — em mono. [JetBrains Mono](https://www.jetbrains.com/lp/mono/)
+/// (OFL, `assets/JETBRAINS-MONO-LICENSE.txt`; build "NL", sem ligadura de
+/// programação — não faz sentido aqui, é só dígito e `:`), no lugar do mono
+/// padrão do `egui` pela mesma razão do Inter: parear uma fonte de corpo
+/// desenhada com cuidado com um mono qualquer desfaz o cuidado.
+const JETBRAINS_MONO_TTF: &[u8] = include_bytes!("../assets/JetBrainsMonoNL-Regular.ttf");
+
+/// Nome da família de fonte reservada aos ícones. Nunca aparece em texto
+/// normal — por isso não entra em `style.text_styles`, só é referenciada
+/// direto por quem desenha ícone (`icon()`).
+fn icon_family() -> FontFamily {
+    FontFamily::Name("lucide".into())
+}
+
+pub fn icon(size: f32) -> FontId {
+    FontId::new(size, icon_family())
+}
+
+fn semibold_family() -> FontFamily {
+    FontFamily::Name("inter-semibold".into())
+}
+
+/// Título de faixa — na lista e na barra do player. Peso de verdade (fonte
+/// SemiBold de verdade), não um truque de desenhar duas vezes.
+pub fn strong(size: f32) -> FontId {
+    FontId::new(size, semibold_family())
+}
+
+/// Glifos usados da fonte de ícones, um por nome do Lucide
+/// (lucide.dev/icons) — o caractere é o ponto de código que aquele ícone
+/// ocupa na fonte, não tem significado fora dela.
+pub mod icon_glyph {
+    pub const PLAY: char = '\u{e13c}';
+    pub const PAUSE: char = '\u{e12e}';
+    pub const SKIP_BACK: char = '\u{e15f}';
+    pub const SKIP_FORWARD: char = '\u{e160}';
+    pub const SHUFFLE: char = '\u{e15e}';
+    pub const REPEAT: char = '\u{e146}';
+    pub const REPEAT_ONE: char = '\u{e1fd}';
+    pub const PICTURE_IN_PICTURE: char = '\u{e3ae}';
+    pub const SEARCH: char = '\u{e151}';
+    pub const PLUS: char = '\u{e13d}';
+    // `minimize`/`maximize` dedicados existem no Lucide (setas de canto
+    // pra dentro/fora), mas na prática lêem como "entrar/sair de tela
+    // cheia" — a convenção universal de SO pra essas duas ações é mesmo o
+    // traço e o quadrado simples, e reconhecível vale mais que original.
+    pub const MINUS: char = '\u{e11c}';
+    pub const SQUARE: char = '\u{e167}';
+    pub const X: char = '\u{e1b2}';
+}
+
 pub const BG: Color32 = Color32::from_rgb(0x0A, 0x0A, 0x0C);
 pub const PANEL: Color32 = Color32::from_rgb(0x0E, 0x0E, 0x12);
 pub const HOVER: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x21);
@@ -20,6 +88,12 @@ pub const DIM: Color32 = Color32::from_rgb(0x6B, 0x6B, 0x78);
 pub const FAINT: Color32 = Color32::from_rgb(0x43, 0x43, 0x4E);
 /// O acento. Um só, e usado com parcimônia.
 pub const ACCENT: Color32 = Color32::from_rgb(0x7C, 0x5C, 0xFF);
+/// Ponta escura do gradiente do acento — a barra de progresso preenchida
+/// vai de `ACCENT_DIM` a `ACCENT_BRIGHT` em vez de uma cor chapada. Ainda é
+/// UM acento (mesmo matiz, só varia luminosidade), não uma paleta nova.
+pub const ACCENT_DIM: Color32 = Color32::from_rgb(0x59, 0x42, 0xB8);
+/// Ponta clara do gradiente, e cor de hover dos botões primários.
+pub const ACCENT_BRIGHT: Color32 = Color32::from_rgb(0x9A, 0x82, 0xFF);
 
 /// Raio padrão de arredondamento — linhas da lista, botões, sidebar, capas
 /// pequenas. Único número, usado em todo lugar, para o arredondamento não
@@ -47,6 +121,47 @@ pub fn small() -> FontId {
 }
 
 pub fn apply(ctx: &egui::Context) {
+    // Família nova, não substitui nem entra como fallback das famílias de
+    // texto — só quem chama `icon()` explicitamente enxerga essa fonte.
+    ctx.add_font(egui::epaint::text::FontInsert::new(
+        "lucide",
+        egui::FontData::from_static(LUCIDE_TTF),
+        vec![egui::epaint::text::InsertFontFamily {
+            family: icon_family(),
+            priority: egui::epaint::text::FontPriority::Highest,
+        }],
+    ));
+
+    // Inter e JetBrains Mono entram com prioridade `Highest` nas famílias
+    // padrão (`Proportional`/`Monospace`) — não substituem o que o `egui`
+    // já registrou ali, ficam na frente. As fontes padrão continuam de
+    // reserva pra glifo que o Inter não cobre (emoji, por exemplo), em vez
+    // de sumir ou virar um quadrado.
+    ctx.add_font(egui::epaint::text::FontInsert::new(
+        "inter-regular",
+        egui::FontData::from_static(INTER_REGULAR_TTF),
+        vec![egui::epaint::text::InsertFontFamily {
+            family: FontFamily::Proportional,
+            priority: egui::epaint::text::FontPriority::Highest,
+        }],
+    ));
+    ctx.add_font(egui::epaint::text::FontInsert::new(
+        "inter-semibold",
+        egui::FontData::from_static(INTER_SEMIBOLD_TTF),
+        vec![egui::epaint::text::InsertFontFamily {
+            family: semibold_family(),
+            priority: egui::epaint::text::FontPriority::Highest,
+        }],
+    ));
+    ctx.add_font(egui::epaint::text::FontInsert::new(
+        "jetbrains-mono",
+        egui::FontData::from_static(JETBRAINS_MONO_TTF),
+        vec![egui::epaint::text::InsertFontFamily {
+            family: FontFamily::Monospace,
+            priority: egui::epaint::text::FontPriority::Highest,
+        }],
+    ));
+
     // Este desenho se compromete com um único visual: mesmo no tema claro do
     // sistema, o player é escuro. Um player de música que muda de cor com o
     // sistema perde a identidade que ele deveria ter.
@@ -100,10 +215,10 @@ pub fn apply(ctx: &egui::Context) {
         (TextStyle::Button, body()),
         (TextStyle::Monospace, mono()),
         (TextStyle::Small, small()),
-        (
-            TextStyle::Heading,
-            FontId::new(15.0, FontFamily::Proportional),
-        ),
+        // O único uso de Heading é o título da faixa tocando — ganha o
+        // mesmo peso de verdade do título da lista (`strong`), não só um
+        // tamanho maior.
+        (TextStyle::Heading, strong(15.0)),
     ]
     .into();
 

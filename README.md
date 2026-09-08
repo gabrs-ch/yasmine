@@ -195,18 +195,115 @@ A sidebar de playlists segue a mesma linguagem: linha alta, destaque recuado
 e arredondado, marca de acento de 2px em quem está ativo — biblioteca ou uma
 playlist, nunca as duas.
 
+Uma playlist pode ser **vinculada a uma pasta** (botão direito → "Vincular
+pasta…"): toda faixa que está, ou vier a entrar, dentro dela passa a fazer
+parte da playlist sozinha, sem arrastar uma por uma. Guardado por (raiz,
+prefixo relativo) — não por caminho absoluto — pelo mesmo motivo de
+`track.rel_path`: mover a pasta de raiz inteira de lugar não invalida o
+vínculo. A sincronização roda depois de cada scan (manual ou pelo vigia de
+arquivos) e é idempotente: só acrescenta o que ainda não está lá, então um
+rescan repetido nunca duplica item.
+
 O controle de volume mestre e a barra de progresso são pílula com bolinha
 arrastável, no espírito do slider do Apple Music — um controle contínuo se
 lê melhor como objeto físico do que como dado tabular. Cor neutra no volume
 (não é "o que está tocando"), acento na barra de progresso (é). A bolinha da
 barra de progresso só aparece em hover/arraste, pra não pesar visualmente
-numa barra que fica sempre visível durante o playback inteiro.
+numa barra que fica sempre visível durante o playback inteiro. A área de
+clique/arraste dos dois é bem mais alta (20px) que o traço visual (4px):
+mirar exatamente numa linha fina é chato, e o alvo generoso não muda como a
+barra parece, só como ela responde. O preenchimento dos dois é gradiente, não
+cor chapada — faixas verticais finas com cor interpolada (`egui::Painter` não
+tem gradiente nativo), mesmo matiz nas duas pontas pra continuar sendo UM
+acento, só com luminosidade variando; no volume o gradiente fica no cinza,
+nunca no acento, porque volume não é "o que está tocando".
 
-MINI, SHUF e RPT são ícone, não texto — mesma razão do transporte (Fase 1):
-forma vetorial garante o traço nítido, sem depender de a fonte do sistema
-ter o símbolo certo. O fundo de hover desses botões arredonda como o resto;
-o desenho do ícone em si fica reto — pictograma pequeno arredondado vira
-borrão em vez de ficar mais bonito.
+A janela é sem decoração nativa (`with_decorations(false)`). No Linux, quem
+desenha o cabeçalho de uma janela é o gerenciador de janelas do usuário — no
+XFCE, um cabeçalho cinza claro genérico, colado direto num conteúdo quase
+preto sem nenhuma relação com ele. Era a costura mais feia da janela inteira,
+e nenhum ajuste de cor dentro do app resolvia, porque o app não desenhava
+aquela barra. Agora desenha: a própria barra de comando (`top_bar`) também é
+a barra de título — arrasta em área livre, duplo clique maximiza/restaura,
+os botões de minimizar/maximizar/fechar são vetoriais, no mesmo traço do
+resto da interface (fechar fica vermelho, a única concessão fora da paleta
+de acento único — convenção forte demais pra abrir mão). O modo compacto
+ganhou o mesmo arraste, senão perderia a única razão de existir ("fica num
+canto da tela") sem ter mais barra nativa pra arrastar. Resultado:
+a janela fica com a mesma cara em qualquer ambiente — XFCE, GNOME, KDE — em
+vez de herdar o que cada um decidir desenhar.
+
+Duas coisas que a decoração nativa dava de graça e precisaram ser refeitas à
+mão: a margem entre o conteúdo e a quina da janela (a decoração *era* essa
+margem — sem ela, o botão de escolher pasta ficava colado no canto esquerdo
+e o de fechar no direito, ambos com 4px de folga contra uma quina totalmente
+reta, sem nenhum arredondamento do sistema pra suavizar) e o traço de 1px em
+volta da janela inteira (sem ele, o retângulo se perdia contra o fundo da
+área de trabalho por trás). Os dois voltaram: 12px de respiro nos cantos da
+barra de comando, e um `rect_stroke` na cor `RULE` desenhado numa camada de
+primeiro plano, por cima de tudo, já que não pertence a painel nenhum.
+
+A capa em destaque (player normal e modo compacto) ganhou um halo suave —
+anéis concêntricos do acento com alfa decrescente atrás do quadrado
+arredondado, a aproximação vetorial de um desfoque que o `Painter` não tem.
+Título da faixa tocando também cresceu (mesmo `TextStyle::Heading` que o
+resto da interface já reservava e não usava) e o título de cada linha da
+lista ganhou peso — sem fonte bold embutida no binário, o texto é desenhado
+duas vezes com um deslocamento de 0,4px, o mesmo truque de sempre pra
+contraste de peso sem arquivo extra. Um fio de 1px separa cada região da
+janela da vizinha (topo/lista, sidebar/lista, e um realce quase transparente
+no topo do player, como se ele flutuasse à frente) — antes a única
+articulação entre elas era a diferença de tom entre `PANEL` e `BG`.
+
+"Pasta…", a única ação possível antes de escolher uma biblioteca, virou
+botão de ação primária (preenchido no acento) nesse momento específico — e só
+nesse: com a biblioteca carregada ele volta a ser um botão neutro, porque aí
+já existem várias ações igualmente válidas, e destacar uma seria hierarquia
+falsa. A mesma ação primária aparece de novo, maior, na tela de boas-vindas
+(que também ganhou o halo atrás da marca) — a dica de texto sozinha numa tela
+em branco era fácil de não notar. O campo de busca ganhou uma lupa à
+esquerda, mesma fonte de ícone do resto.
+
+**Todo ícone da interface** — transporte, shuffle/repeat/modo compacto, "+"
+de nova playlist, lupa da busca, os três controles de janela — vem da mesma
+fonte: [Lucide](https://lucide.dev) (ISC, `assets/lucide.ttf`,
+`assets/LUCIDE-LICENSE.txt`), embutida no binário como qualquer outro
+asset. Começou como forma vetorial desenhada à mão (`Painter::line_segment`,
+`convex_polygon`) pela mesma razão de sempre — traço nítido garantido, sem
+depender de a fonte do sistema ter o símbolo certo — mas ícone bem desenhado
+é ofício de quem faz isso o dia inteiro, não de reinventar cada forma em
+coordenada de pixel. A fonte resolve os dois ao mesmo tempo: continua
+embutida (mesma garantia de traço, zero dependência do ambiente) e o
+desenho em si é o de gente que projeta ícone pra viver. Registrada como família
+`FontFamily::Name` própria (`theme::icon_family`), nunca entra nas famílias
+de texto normal — só quem chama `theme::icon()` explicitamente a enxerga.
+
+Os três controles de janela (minimizar/maximizar/fechar) merecem nota à
+parte: o Lucide tem ícones dedicados pra essas duas primeiras ações (setas
+de canto pra dentro/fora), visualmente mais originais que traço e quadrado
+— mas na prática lêem como "entrar/sair de tela cheia", não "minimizar pra
+barra de tarefas"/"maximizar". Testado, achado confuso, revertido pro
+traço e quadrado simples: a convenção universal existe por um motivo, e
+reconhecível vale mais que original numa ação que o usuário precisa
+identificar sem pensar. O fundo de hover dos três é círculo, não o
+cantos-arredondados do resto dos botões — um "controle de janela" lê melhor
+como forma fechada em si, no espírito dos três pontinhos do macOS, do que
+como mais um botão retangular na fileira.
+
+**Texto**: [Inter](https://rsms.me/inter) (OFL, `assets/Inter-Regular.ttf` +
+`assets/Inter-SemiBold.ttf`) no lugar da fonte padrão que o `egui` já traz
+embutida, e [JetBrains Mono](https://www.jetbrains.com/lp/mono/) (OFL,
+build "NL" — sem ligadura de programação, que não faz sentido pra exibir
+duração de faixa) no lugar do mono padrão. A fonte padrão existe pra rodar
+em qualquer lugar sem asset nenhum; "roda em qualquer lugar" e "bonita" são
+objetivos diferentes, e só dá pra ter os dois embutindo a própria. As duas
+entram com prioridade `Highest` nas famílias `Proportional`/`Monospace` — não
+substituem o que o `egui` já registrou ali, ficam na frente; o que sobra
+(emoji, por exemplo) continua caindo nas fontes padrão como reserva, em vez
+de sumir. O título da faixa — na lista e na barra do player — ganhou peso de
+verdade (`theme::strong`, a família SemiBold) no lugar do truque de desenhar
+o texto duas vezes com um deslocamento de 0,4px que fingia negrito antes de
+ter uma fonte de peso variável no binário.
 
 **A marca do Yasmine** é uma nota musical brotando folhas — arte fornecida
 pelo usuário, cor chapada, sem gradiente. Tem curva de verdade (a nota, as
@@ -231,6 +328,7 @@ própria cópia ou reimplementação.
 | `Ctrl+M` | modo compacto |
 | duplo clique | tocar a faixa |
 | botão direito numa faixa | adicionar a playlist, mover, remover |
+| botão direito numa playlist | renomear, apagar, vincular/desvincular pasta |
 
 ## Desenvolvimento
 

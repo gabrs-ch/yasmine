@@ -5,7 +5,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 /// Versão do schema gravada em `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
@@ -112,6 +112,19 @@ impl Db {
             tx.execute_batch(
                 "ALTER TABLE track ADD COLUMN loudness_gain_db REAL;
                  ALTER TABLE track ADD COLUMN loudness_peak REAL;",
+            )?;
+        }
+        if version < 3 {
+            // Playlist vinculada a pasta (ver player_core::playlist_folder):
+            // tabela nova, não coluna, então não cabe num ALTER TABLE.
+            tx.execute_batch(
+                "CREATE TABLE playlist_folder (
+                    playlist_id BLOB    NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+                    root_id     INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+                    rel_prefix  TEXT    NOT NULL,
+                    PRIMARY KEY (playlist_id, root_id, rel_prefix)
+                 ) STRICT;
+                 CREATE INDEX playlist_folder_by_root ON playlist_folder (root_id, rel_prefix);",
             )?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;

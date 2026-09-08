@@ -166,6 +166,10 @@ CREATE TABLE playlist_item (
 
 CREATE INDEX playlist_item_by_track ON playlist_item (track_key);
 
+-- playlist_folder (pasta vinculada a uma playlist) chega via migração (db.rs
+-- SCHEMA_VERSION 3), não está aqui: fresh install e upgrade passam pelo mesmo
+-- CREATE TABLE, sem duplicar a lógica de criação.
+
 -- Contador por device (G-Counter). LWW aqui estaria ERRADO: se o PC tocou 3x e
 -- o celular 2x, LWW guarda 3 e perde 2. O total é SUM(count), e o merge é
 -- MAX(count) por (faixa, device) — converge sem perder play nenhum.

@@ -431,6 +431,38 @@ impl App {
         }
     }
 
+    /// Vincula uma playlist a uma pasta escolhida pelo usuário: toda faixa
+    /// que já está (ou vier a entrar, no próximo scan) dentro dela passa a
+    /// fazer parte da playlist sozinha.
+    fn link_playlist_folder(&mut self, playlist_id: Uuid) {
+        let Some(folder) = rfd::FileDialog::new()
+            .set_title("Escolha a pasta para vincular à playlist")
+            .pick_folder()
+        else {
+            return;
+        };
+
+        match player_core::playlist_folder::link(&self.db, playlist_id, &folder) {
+            Ok(Ok(())) => {
+                let _ = player_core::playlist_folder::sync_all(&mut self.db);
+                self.playlists = playlist::all(&self.db).unwrap_or_default();
+                if self.source == Source::Playlist(playlist_id) {
+                    self.reload();
+                }
+                self.status = "pasta vinculada".into();
+            }
+            Ok(Err(player_core::playlist_folder::ForaDaBiblioteca)) => {
+                self.status = "essa pasta está fora da biblioteca atual".into();
+            }
+            Err(err) => self.status = format!("não consegui vincular a pasta: {err}"),
+        }
+    }
+
+    fn unlink_playlist_folder(&mut self, playlist_id: Uuid, root_id: i64, rel_prefix: &str) {
+        let _ = player_core::playlist_folder::unlink(&self.db, playlist_id, root_id, rel_prefix);
+        self.status = "pasta desvinculada".into();
+    }
+
     /// Passa a vigiar `folder`, trocando o vigia anterior.
     fn watch(&mut self, folder: &Path) {
         if self.watcher.as_ref().is_some_and(|w| w.root() == folder) {
@@ -505,6 +537,13 @@ impl App {
                     report.unchanged,
                     elapsed.as_secs_f64()
                 );
+                // Síncrono, não numa thread própria: é só um punhado de
+                // consultas contra os vínculos existentes, ao contrário do
+                // nivelador (que decodifica áudio inteiro e por isso roda à
+                // parte). Depois de sincronizar, `reload` de novo — se a
+                // fonte atual for uma playlist vinculada, as faixas que
+                // acabaram de entrar já aparecem sem precisar de outro clique.
+                let _ = player_core::playlist_folder::sync_all(&mut self.db);
                 self.reload();
                 self.spawn_loudness_fill();
             }
@@ -666,9 +705,41 @@ impl App {
         // `horizontal` não centraliza no eixo vertical — só aloca a altura
         // do conteúdo e larga ele no topo da faixa de 34px, colado na
         // borda. `horizontal_centered` aloca a faixa inteira e centraliza.
+        let full = ui.max_rect();
+
+        // Sem decoração nativa (`with_decorations(false)` no viewport,
+        // main.rs): esta barra também É a barra de título — a barra cinza
+        // clara que o xfwm4 desenhava, colada direto num conteúdo quase
+        // preto sem ter nada a ver com ele, era a fonte real da "janela
+        // feia" que nenhum ajuste de cor dentro do app resolvia. Área livre
+        // (fora dos botões, adicionados depois — eles ganham prioridade por
+        // serem registrados por último) arrasta a janela; clique duplo
+        // maximiza/restaura, como qualquer barra de título de verdade.
+        let drag = ui.interact(full, ui.id().with("titlebar-drag"), Sense::click_and_drag());
+        if drag.double_clicked() {
+            let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        } else if drag.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+
         ui.horizontal_centered(|ui| {
-            ui.add_space(4.0);
-            if ui.button("Pasta…").clicked() {
+            // 4px bastava quando a decoração nativa emprestava uma borda de
+            // janela de verdade antes do conteúdo começar. Sem ela, esse
+            // espaço É a única coisa entre o botão e a quina da janela — 4px
+            // ficava colado, esquisito. 12px é o mesmo respiro que sobra nos
+            // outros cantos agora.
+            ui.add_space(12.0);
+            // Sem pasta ainda, "Pasta…" é a única coisa que dá pra fazer —
+            // ganha o acento de ação primária. Com biblioteca carregada vira
+            // reconfiguração ocasional, não pede mais destaque que isso.
+            let pick = if self.root.is_none() {
+                primary_button(ui, "Escolher pasta de música…")
+            } else {
+                ui.button("Pasta…")
+            };
+            if pick.clicked() {
                 self.pick_folder();
             }
 
@@ -689,13 +760,16 @@ impl App {
             // de busca de 220px sobra do espaço disponível e invade o texto
             // da direita — as duas são desenhadas sem uma saber da outra,
             // então o resultado é sobreposição, não quebra de linha. Reserva
-            // uma folga pro texto da direita antes de decidir a largura.
-            let search_width = (ui.available_width() - 210.0).clamp(60.0, 220.0);
+            // uma folga pro texto da direita antes de decidir a largura —
+            // agora incluindo os três controles de janela do lado direito.
+            let search_width = (ui.available_width() - 340.0).clamp(60.0, 220.0);
             // A busca só filtra a biblioteca — dentro de uma playlist ela
             // ficaria filtrando contra o índice errado. Desabilitada, não
             // escondida: o texto continua ali para quando o usuário voltar.
             let in_library = self.source == Source::Library;
             ui.add_enabled_ui(in_library, |ui| {
+                search_icon(ui);
+                ui.add_space(-6.0);
                 let search = ui.add(
                     egui::TextEdit::singleline(&mut self.query)
                         .desired_width(search_width)
@@ -710,7 +784,25 @@ impl App {
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(4.0);
+                // Mesmo respiro do canto esquerdo, agora do lado direito —
+                // sem ele o botão de fechar ficava colado na quina.
+                ui.add_space(12.0);
+                // Controles de janela — os que o xfwm4 desenhava sozinho
+                // antes de `with_decorations(false)`. Primeiro a entrar no
+                // layout right-to-left é o que fica mais à direita.
+                if window_button(ui, WindowGlyph::Close).clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if window_button(ui, WindowGlyph::Maximize).clicked() {
+                    let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                }
+                if window_button(ui, WindowGlyph::Minimize).clicked() {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                ui.add_space(10.0);
                 let texto = match (&self.scan, self.source) {
                     (Some(job), _) => {
                         format!("escaneando… {}", job.progress.load(Ordering::Relaxed))
@@ -734,11 +826,23 @@ impl App {
                 );
             });
         });
+        // Fio de 1px separando o topo do conteúdo — o Apple Music usa a
+        // mesma régua fina entre as regiões da janela; sem ela, o topo e a
+        // lista eram a mesma cor sólida sem nenhuma articulação entre as
+        // duas.
+        ui.painter().line_segment(
+            [
+                pos2(full.left(), full.bottom() - 0.5),
+                pos2(full.right(), full.bottom() - 0.5),
+            ],
+            Stroke::new(1.0, theme::RULE),
+        );
     }
 
     /// Barra lateral: biblioteca + playlists. Larga o bastante para nomes
     /// razoáveis, estreita o bastante para não roubar espaço da lista.
     fn sidebar(&mut self, ui: &mut egui::Ui) {
+        let full = ui.max_rect();
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(6.0);
 
@@ -756,8 +860,7 @@ impl App {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
-                if ui
-                    .add(egui::Button::new(egui::RichText::new("+").font(theme::mono())).small())
+                if add_playlist_button(ui)
                     .on_hover_text("Nova playlist")
                     .clicked()
                 {
@@ -815,12 +918,48 @@ impl App {
                     pending_delete = Some(pl.id);
                     ui.close();
                 }
+                ui.separator();
+                if ui
+                    .button("Vincular pasta…")
+                    .on_hover_text(
+                        "Toda faixa dessa pasta entra sozinha na playlist, \
+                         sem precisar arrastar uma por uma",
+                    )
+                    .clicked()
+                {
+                    self.link_playlist_folder(pl.id);
+                    ui.close();
+                }
+                for link in player_core::playlist_folder::links_for(&self.db, pl.id)
+                    .unwrap_or_default()
+                {
+                    let label = if link.rel_prefix.is_empty() {
+                        "Desvincular pasta inteira".to_owned()
+                    } else {
+                        format!("Desvincular \"{}\"", link.rel_prefix)
+                    };
+                    if ui.button(label).clicked() {
+                        self.unlink_playlist_folder(pl.id, link.root_id, &link.rel_prefix);
+                        ui.close();
+                    }
+                }
             });
         }
 
         if let Some(id) = pending_delete {
             self.delete_playlist(id);
         }
+
+        // Mesmo fio de 1px do topo, na borda direita — separa a sidebar do
+        // conteúdo em vez de deixar a diferença de tom (`PANEL` contra `BG`)
+        // como única articulação entre as duas.
+        ui.painter().line_segment(
+            [
+                pos2(full.right() - 0.5, full.top()),
+                pos2(full.right() - 0.5, full.bottom()),
+            ],
+            Stroke::new(1.0, theme::RULE),
+        );
     }
 
     fn list(&mut self, ui: &mut egui::Ui) {
@@ -832,13 +971,14 @@ impl App {
                 // resultado é estado normal de uso, não pede identidade.
                 if self.root.is_none() {
                     let (rect, _) = ui.allocate_exact_size(vec2(80.0, 80.0), Sense::hover());
+                    glow(ui.painter(), rect, theme::ACCENT);
                     ui.painter().image(
                         self.mark.id(),
                         rect,
                         Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
                         Color32::WHITE,
                     );
-                    ui.add_space(12.0);
+                    ui.add_space(16.0);
                 }
                 let texto = match self.source {
                     _ if self.root.is_none() => "Escolha uma pasta de música para começar.",
@@ -849,6 +989,16 @@ impl App {
                     Source::Library => "Nada encontrado.",
                 };
                 ui.label(egui::RichText::new(texto).color(theme::DIM));
+                // A tela de boas-vindas ganha um botão de verdade, não só a
+                // dica de texto — "Pasta…" no topo já faz isso, mas escondido
+                // num canto pequeno na primeira execução (tela em branco,
+                // nada pra olhar) é fácil de não notar.
+                if self.root.is_none() {
+                    ui.add_space(16.0);
+                    if primary_button(ui, "Escolher pasta de música…").clicked() {
+                        self.pick_folder();
+                    }
+                }
             });
             return;
         }
@@ -959,11 +1109,11 @@ impl App {
                         theme::mono(),
                         theme::FAINT,
                     );
-                    cell(
+                    cell_strong(
                         painter,
                         cols.title(rect),
                         &row.title,
-                        theme::body(),
+                        13.0,
                         title_color,
                     );
                     cell(
@@ -1054,6 +1204,14 @@ impl App {
 
     fn player_bar(&mut self, ui: &mut egui::Ui) {
         let state = self.engine.state();
+        let full = ui.max_rect();
+        // Fio bem claro (branco quase transparente, não a régua escura de
+        // sempre) na borda de cima — separa o player do conteúdo por trás
+        // como se ele flutuasse um pouco à frente, não só a mudança de tom.
+        ui.painter().line_segment(
+            [full.left_top(), full.right_top()],
+            Stroke::new(1.0, Color32::from_white_alpha(14)),
+        );
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -1067,7 +1225,7 @@ impl App {
                 ui.add_space(6.0);
                 match &self.now {
                     Some(row) => {
-                        ui.label(egui::RichText::new(&row.title).color(theme::TEXT));
+                        ui.label(egui::RichText::new(&row.title).heading().color(theme::TEXT));
                         ui.label(
                             egui::RichText::new(format!(
                                 "{}  ·  {}",
@@ -1180,13 +1338,17 @@ impl App {
     /// segundo e último uso do acento além da marca da faixa tocando. A
     /// bolinha só aparece em hover/arraste, pra não pesar visualmente numa
     /// barra que fica sempre visível durante o playback inteiro.
+    ///
+    /// A área clicável (`HIT_HEIGHT`) é bem maior que o traço visual de 4px:
+    /// clicar/arrastar em cima ou embaixo da linha, não só exatamente nela,
+    /// continua funcionando — sem isso o alvo de clique real era de uns 12px,
+    /// difícil de acertar de primeira.
     fn progress_bar(&mut self, ui: &mut egui::Ui, state: player_audio::PlaybackState) {
+        const HIT_HEIGHT: f32 = 20.0;
         let width = ui.available_width();
         let knob_radius = 5.0;
-        let (rect, response) = ui.allocate_exact_size(
-            vec2(width, knob_radius * 2.0 + 2.0),
-            Sense::click_and_drag(),
-        );
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(width, HIT_HEIGHT), Sense::click_and_drag());
         let painter = ui.painter();
 
         let track_height = 4.0;
@@ -1206,10 +1368,13 @@ impl App {
                 track.left_top(),
                 vec2((knob_x - track.left()).max(track_height), track.height()),
             );
-            painter.rect_filled(filled, radius, theme::ACCENT);
+            // Gradiente, não cor chapada — mesmo matiz nas duas pontas, só
+            // luminosidade diferente, o único lugar da interface onde o
+            // acento ganha profundidade.
+            gradient_fill(painter, filled, radius, theme::ACCENT_DIM, theme::ACCENT_BRIGHT);
         }
         if response.hovered() || response.dragged() {
-            painter.circle_filled(pos2(knob_x, track.center().y), knob_radius, theme::ACCENT);
+            painter.circle_filled(pos2(knob_x, track.center().y), knob_radius, theme::ACCENT_BRIGHT);
         }
 
         if let (true, Some(total), Some(pointer)) = (
@@ -1229,6 +1394,11 @@ impl App {
         let (cover, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
         let painter = ui.painter();
         let radius = theme::RADIUS;
+        // Só brilha tocando algo — capa vazia não precisa de halo em volta
+        // de um retângulo em branco.
+        if self.now.is_some() {
+            glow(painter, cover, theme::ACCENT);
+        }
         painter.rect_filled(cover, CornerRadius::same(radius), theme::PANEL);
         let texture = self
             .now
@@ -1252,6 +1422,18 @@ impl App {
     /// "sempre visível, sempre pequeno" que falta em muito player.
     fn mini_bar(&mut self, ui: &mut egui::Ui) {
         let state = self.engine.state();
+
+        // Sem decoração nativa, o modo compacto também perdeu a barra de
+        // título que dava pra arrastar — e arrastar é o ponto inteiro dele
+        // ("fica num canto da tela"). Recupera isso à mão: área livre (fora
+        // dos botões) move a janela.
+        let full = ui.max_rect();
+        if ui
+            .interact(full, ui.id().with("mini-drag"), Sense::click_and_drag())
+            .drag_started()
+        {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -1309,6 +1491,7 @@ impl App {
                 {
                     self.toggle_mini(ui.ctx());
                 }
+                ui.add_space(6.0);
             });
         });
 
@@ -1436,7 +1619,7 @@ impl eframe::App for App {
                 .show(ui, |ui| self.top_bar(ui));
 
             egui::Panel::bottom("player")
-                .exact_size(84.0)
+                .exact_size(92.0)
                 .frame(egui::Frame::new().fill(theme::PANEL))
                 .show(ui, |ui| self.player_bar(ui));
 
@@ -1466,6 +1649,22 @@ impl eframe::App for App {
                 .frame(egui::Frame::new().fill(theme::BG))
                 .show(ui, |ui| self.list(ui));
         }
+
+        // Sem decoração nativa, a janela também perdeu o traço de 1px que o
+        // gerenciador de janelas desenhava em volta dela — sem ele, o
+        // retângulo se perde contra o fundo da área de trabalho por trás.
+        // Numa camada de primeiro plano, por cima de tudo, porque não faz
+        // parte de painel nenhum.
+        ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("window-border"),
+        ))
+        .rect_stroke(
+            ctx.content_rect().shrink(0.5),
+            CornerRadius::ZERO,
+            Stroke::new(1.0, theme::RULE),
+            egui::StrokeKind::Inside,
+        );
 
         // A política de repaint. Nada de 60 fps.
         if self.scan.is_some() {
@@ -1597,6 +1796,47 @@ fn rounded_image(painter: &egui::Painter, rect: Rect, texture: egui::TextureId, 
     painter.add(shape);
 }
 
+/// Brilho suave atrás de um retângulo (capa, marca) — anéis concêntricos com
+/// alfa decrescente. `egui::Painter` não tem desfoque de verdade; isso é
+/// vetor puro (uns círculos a mais por frame) chegando perto do efeito sem
+/// precisar de shader nem textura pré-borrada.
+fn glow(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let center = rect.center();
+    let base = rect.width().max(rect.height()) / 2.0;
+    for (i, alpha) in [14u8, 9, 5].into_iter().enumerate() {
+        let radius = base + 3.0 + i as f32 * 4.0;
+        let tint = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+        painter.circle_filled(center, radius, tint);
+    }
+}
+
+fn lerp_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t) as u8;
+    Color32::from_rgb(mix(from.r(), to.r()), mix(from.g(), to.g()), mix(from.b(), to.b()))
+}
+
+/// Preenchimento em gradiente horizontal dentro de uma pílula. `Painter` não
+/// tem gradiente nativo: a base sólida em `to` cobre as pontas arredondadas
+/// (raio pequeno, ninguém nota a costura), e por cima faixas verticais finas
+/// com cor interpolada cobrem só o miolo reto — sem precisar recortar pra
+/// forma arredondada.
+fn gradient_fill(painter: &egui::Painter, rect: Rect, radius: f32, from: Color32, to: Color32) {
+    painter.rect_filled(rect, radius, to);
+    let inner = rect.shrink2(vec2(radius, 0.0));
+    if inner.width() <= 0.0 {
+        return;
+    }
+    const STEPS: usize = 16;
+    let step_w = inner.width() / STEPS as f32;
+    for i in 0..STEPS {
+        let t = i as f32 / (STEPS - 1) as f32;
+        let x0 = inner.left() + step_w * i as f32;
+        let strip = Rect::from_min_max(pos2(x0, inner.top()), pos2(x0 + step_w + 0.5, inner.bottom()));
+        painter.rect_filled(strip, 0.0, lerp_color(from, to, t));
+    }
+}
+
 /// Texto de uma célula, truncado na largura da coluna.
 fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, color: Color32) {
     if text.is_empty() {
@@ -1619,6 +1859,15 @@ fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, col
     );
 }
 
+/// Igual a [`cell`], mas com peso de verdade — fonte SemiBold embutida
+/// (`theme::strong`), não mais o texto desenhado duas vezes com deslocamento
+/// que fingia negrito antes de ter uma família de peso variável no binário.
+/// Reservado pro título — usar em toda célula apagaria a hierarquia que ele
+/// existe pra criar.
+fn cell_strong(painter: &egui::Painter, rect: Rect, text: &str, size: f32, color: Color32) {
+    cell(painter, rect, text, theme::strong(size), color);
+}
+
 /// Controle de volume mestre: trilho em pílula com uma bolinha arrastável,
 /// no espírito do slider de volume do Apple Music.
 ///
@@ -1633,11 +1882,15 @@ fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, col
 ///
 /// Devolve o novo valor quando o usuário mexe; `None` quando só está sendo
 /// desenhado sem interação nesta chamada.
+///
+/// Mesmo alvo de clique generoso do `progress_bar`: `HIT_HEIGHT` bem maior
+/// que o traço de 4px, pra não exigir mira milimétrica numa bolinha pequena.
 fn volume_slider(ui: &mut egui::Ui, value: f32) -> Option<f32> {
+    const HIT_HEIGHT: f32 = 20.0;
     let value = value.clamp(0.0, 1.0);
     let knob_radius = 5.0;
     let (rect, response) =
-        ui.allocate_exact_size(vec2(56.0, knob_radius * 2.0 + 2.0), Sense::click_and_drag());
+        ui.allocate_exact_size(vec2(56.0, HIT_HEIGHT), Sense::click_and_drag());
     let painter = ui.painter();
 
     // Trilho: pílula (raio = metade da altura), não retângulo — é a curva
@@ -1653,7 +1906,11 @@ fn volume_slider(ui: &mut egui::Ui, value: f32) -> Option<f32> {
             track.left_top(),
             vec2((knob_x - track.left()).max(track_height), track.height()),
         );
-        painter.rect_filled(filled, radius, theme::DIM);
+        // Gradiente neutro (cinza pra cinza, nunca o acento — volume não é
+        // "o que está tocando"): mesmo toque de profundidade da barra de
+        // progresso, sem tomar emprestada a cor que devia significar outra
+        // coisa.
+        gradient_fill(painter, filled, radius, theme::FAINT, theme::DIM);
     }
 
     // A bolinha: mais clara em hover/arraste, para confirmar que pegou o
@@ -1684,11 +1941,10 @@ enum Icon {
     Mini,
 }
 
-/// Alternador desenhado como ícone vetorial — mesma razão do transporte
-/// (`Glyph`): traço nítido garantido, sem depender da fonte do sistema ter
-/// o símbolo certo. O fundo de hover arredonda como o resto da interface;
-/// o desenho do ícone em si fica reto — pictograma pequeno arredondado vira
-/// borrão em vez de ficar mais bonito.
+/// Alternador com ícone da fonte Lucide. O fundo de hover arredonda como o
+/// resto da interface; `Repeat(true)` sobrepõe um "1" pequeno no canto —
+/// o Lucide já tem um glifo dedicado pra "repetir uma" (`repeat-1`), então
+/// não precisa desenhar o dígito à mão como antes.
 fn icon_toggle(ui: &mut egui::Ui, icon: Icon, active: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(28.0, 26.0), Sense::click());
     let painter = ui.painter();
@@ -1704,56 +1960,19 @@ fn icon_toggle(ui: &mut egui::Ui, icon: Icon, active: bool) -> egui::Response {
         theme::FAINT
     };
 
-    let c = rect.center();
-    let s = 5.0;
-
-    match icon {
-        Icon::Shuffle => {
-            // Dois caminhos cruzando — os dois trocando de lugar, que é o
-            // que shuffle faz de verdade. Sem seta: numa área de 28x26,
-            // ponta de seta vira ruído em vez de esclarecer.
-            let stroke = Stroke::new(1.4, color);
-            painter.line_segment([pos2(c.x - s, c.y - s), pos2(c.x + s, c.y + s)], stroke);
-            painter.line_segment([pos2(c.x - s, c.y + s), pos2(c.x + s, c.y - s)], stroke);
-        }
-        Icon::Repeat(one) => {
-            // Retângulo — um laço fechado, sem precisar de seta nem curva
-            // pra sugerir "roda e volta". O dial de dica (hover) que já
-            // existe explica o resto.
-            let r = Rect::from_center_size(c, vec2(s * 2.0, s * 1.7));
-            painter.rect_stroke(
-                r,
-                CornerRadius::ZERO,
-                Stroke::new(1.3, color),
-                egui::StrokeKind::Inside,
-            );
-            if one {
-                painter.text(c, Align2::CENTER_CENTER, "1", theme::small(), color);
-            }
-        }
-        Icon::Mini => {
-            // Retângulo grande com um pequeno preenchido no canto — o ícone
-            // universal de picture-in-picture, e cai de graça na linguagem
-            // de cantos retos.
-            let outer = Rect::from_center_size(c, vec2(s * 2.4, s * 2.0));
-            painter.rect_stroke(
-                outer,
-                CornerRadius::ZERO,
-                Stroke::new(1.2, color),
-                egui::StrokeKind::Inside,
-            );
-            let inset = 1.5;
-            let inner_size = vec2(s * 1.1, s * 0.9);
-            let inner = Rect::from_min_size(
-                pos2(
-                    outer.right() - inset - inner_size.x,
-                    outer.bottom() - inset - inner_size.y,
-                ),
-                inner_size,
-            );
-            painter.rect_filled(inner, CornerRadius::ZERO, color);
-        }
-    }
+    let glyph = match icon {
+        Icon::Shuffle => theme::icon_glyph::SHUFFLE,
+        Icon::Repeat(true) => theme::icon_glyph::REPEAT_ONE,
+        Icon::Repeat(false) => theme::icon_glyph::REPEAT,
+        Icon::Mini => theme::icon_glyph::PICTURE_IN_PICTURE,
+    };
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph,
+        theme::icon(15.0),
+        color,
+    );
 
     // Sublinhado de 1px marca ligado — mesma linguagem do toggle em texto.
     if active {
@@ -1769,6 +1988,121 @@ fn icon_toggle(ui: &mut egui::Ui, icon: Icon, active: bool) -> egui::Response {
     response
 }
 
+/// Botão "+" de nova playlist, no cabeçalho da sidebar.
+///
+/// Era um `egui::Button` de texto (`"+".small()`) — uma caixa retangular
+/// apertada em volta de um glifo de fonte, destoando do resto da interface,
+/// que não usa texto pra ação nenhuma no player.
+fn add_playlist_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+    let painter = ui.painter();
+
+    if response.hovered() {
+        painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_SM), theme::HOVER);
+    }
+    let color = if response.hovered() {
+        theme::TEXT
+    } else {
+        theme::DIM
+    };
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        theme::icon_glyph::PLUS,
+        theme::icon(14.0),
+        color,
+    );
+
+    response
+}
+
+/// Lupa à esquerda do campo de busca. Puramente decorativo
+/// (`Sense::hover`), não captura clique — o campo de texto continua sendo
+/// o alvo.
+fn search_icon(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+    ui.painter().text(
+        pos2(rect.left() + 8.0, rect.center().y),
+        Align2::CENTER_CENTER,
+        theme::icon_glyph::SEARCH,
+        theme::icon(13.0),
+        theme::FAINT,
+    );
+}
+
+#[derive(Clone, Copy)]
+enum WindowGlyph {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+/// Botão de controle de janela (minimizar/maximizar/fechar), no lugar do
+/// que o gerenciador de janelas desenhava sozinho antes de
+/// `with_decorations(false)`. Traço vetorial, mesma linguagem do resto —
+/// fechar ganha o único vermelho da interface inteira, convenção forte
+/// demais pra abrir mão dela só por causa da paleta de acento único.
+fn window_button(ui: &mut egui::Ui, glyph: WindowGlyph) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(32.0, 26.0), Sense::click());
+    let painter = ui.painter();
+
+    // Fundo circular, não o mesmo cantos-arredondados do resto dos botões —
+    // um "botão de controle" lê melhor como forma fechada em si (o mesmo
+    // motivo do macOS pros seus três pontinhos) do que como mais um botão
+    // retangular entre os outros da barra.
+    let is_close = matches!(glyph, WindowGlyph::Close);
+    if response.hovered() {
+        let bg = if is_close {
+            Color32::from_rgb(0xC4, 0x3B, 0x3B)
+        } else {
+            theme::HOVER
+        };
+        painter.circle_filled(rect.center(), 12.0, bg);
+    }
+    let color = match (response.hovered(), is_close) {
+        (true, true) => Color32::WHITE,
+        (true, false) => theme::TEXT,
+        (false, _) => theme::DIM,
+    };
+
+    let glyph_ch = match glyph {
+        WindowGlyph::Minimize => theme::icon_glyph::MINUS,
+        WindowGlyph::Maximize => theme::icon_glyph::SQUARE,
+        WindowGlyph::Close => theme::icon_glyph::X,
+    };
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph_ch,
+        theme::icon(15.0),
+        color,
+    );
+
+    response
+}
+
+/// Botão de ação primária: preenchido no acento. Reservado pro momento em
+/// que só existe UMA coisa a fazer na tela — escolher a pasta de música da
+/// primeira vez. Fora disso o botão neutro do tema já basta: dar destaque de
+/// acento a toda ação da interface viraria ruído, não hierarquia.
+fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), theme::body(), Color32::WHITE);
+    let padding = vec2(14.0, 8.0);
+    let (rect, response) =
+        ui.allocate_exact_size(galley.size() + padding * 2.0, Sense::click());
+    let painter = ui.painter();
+    let fill = if response.hovered() {
+        theme::ACCENT_BRIGHT
+    } else {
+        theme::ACCENT
+    };
+    painter.rect_filled(rect, CornerRadius::same(theme::RADIUS), fill);
+    painter.galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
+    response
+}
+
 #[derive(Clone, Copy)]
 enum Glyph {
     Prev,
@@ -1777,10 +2111,7 @@ enum Glyph {
     Next,
 }
 
-/// Botão de transporte desenhado à mão.
-///
-/// Formas geométricas em vez de glifos de fonte: garante o traço nítido que a
-/// direção visual pede e não depende de a fonte do sistema ter os símbolos.
+/// Botão de transporte, com ícone da fonte Lucide.
 fn transport(ui: &mut egui::Ui, glyph: Glyph) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(30.0, 26.0), Sense::click());
     let painter = ui.painter();
@@ -1794,59 +2125,13 @@ fn transport(ui: &mut egui::Ui, glyph: Glyph) -> egui::Response {
         theme::DIM
     };
 
-    let c = rect.center();
-    let s = 5.0;
-    match glyph {
-        Glyph::Play => {
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    pos2(c.x - s * 0.6, c.y - s),
-                    pos2(c.x - s * 0.6, c.y + s),
-                    pos2(c.x + s, c.y),
-                ],
-                color,
-                Stroke::NONE,
-            ));
-        }
-        Glyph::Pause => {
-            for dx in [-3.0, 1.5] {
-                painter.rect_filled(
-                    Rect::from_min_size(pos2(c.x + dx, c.y - s), vec2(2.5, s * 2.0)),
-                    CornerRadius::ZERO,
-                    color,
-                );
-            }
-        }
-        Glyph::Prev | Glyph::Next => {
-            let dir = if matches!(glyph, Glyph::Next) {
-                1.0
-            } else {
-                -1.0
-            };
-            for offset in [-s * 0.9, s * 0.1] {
-                painter.add(egui::Shape::convex_polygon(
-                    vec![
-                        pos2(c.x + dir * offset, c.y - s * 0.8),
-                        pos2(c.x + dir * offset, c.y + s * 0.8),
-                        pos2(c.x + dir * (offset + s * 0.8), c.y),
-                    ],
-                    color,
-                    Stroke::NONE,
-                ));
-            }
-            painter.rect_filled(
-                Rect::from_min_size(
-                    pos2(
-                        c.x + dir * s * 0.9 - if dir > 0.0 { 0.0 } else { 2.0 },
-                        c.y - s * 0.8,
-                    ),
-                    vec2(2.0, s * 1.6),
-                ),
-                CornerRadius::ZERO,
-                color,
-            );
-        }
-    }
+    let ch = match glyph {
+        Glyph::Play => theme::icon_glyph::PLAY,
+        Glyph::Pause => theme::icon_glyph::PAUSE,
+        Glyph::Prev => theme::icon_glyph::SKIP_BACK,
+        Glyph::Next => theme::icon_glyph::SKIP_FORWARD,
+    };
+    painter.text(rect.center(), Align2::CENTER_CENTER, ch, theme::icon(16.0), color);
 
     response
 }

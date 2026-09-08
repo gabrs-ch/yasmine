@@ -12,6 +12,7 @@ pub mod loudness;
 pub mod model;
 pub mod norm;
 pub mod playlist;
+pub mod playlist_folder;
 pub mod scan;
 
 #[cfg(test)]
