@@ -775,7 +775,15 @@ impl App {
     fn list(&mut self, ui: &mut egui::Ui) {
         if self.view.is_empty() {
             ui.vertical_centered(|ui| {
-                ui.add_space(80.0);
+                ui.add_space(64.0);
+                // A marca só aparece na primeira tela — bem-vindo, não em
+                // toda lista vazia. Uma playlist sem faixas ou uma busca sem
+                // resultado é estado normal de uso, não pede identidade.
+                if self.root.is_none() {
+                    let (rect, _) = ui.allocate_exact_size(vec2(80.0, 80.0), Sense::hover());
+                    draw_mark(ui.painter(), rect.center(), 34.0);
+                    ui.add_space(12.0);
+                }
                 let texto = match self.source {
                     _ if self.root.is_none() => "Escolha uma pasta de música para começar.",
                     Source::Playlist(_) => {
@@ -1031,24 +1039,38 @@ impl App {
                 }
 
                 ui.add_space(10.0);
-                // Alternadores como rótulo aceso/apagado, não como cor: o
-                // acento continua significando "é isto que está tocando".
-                let repeat_label = match self.queue.repeat() {
-                    Repeat::Off | Repeat::All => "RPT",
-                    Repeat::One => "RPT 1",
-                };
-                if toggle(ui, repeat_label, self.queue.repeat() != Repeat::Off).clicked() {
-                    let mode = self.queue.repeat().next();
-                    self.queue.set_repeat(mode);
-                    self.queue_next();
+                // Ícones, não rótulo: aceso/apagado continua sendo a cor, o
+                // acento continua reservado pra "isto está tocando".
+                if icon_toggle(ui, Icon::Mini, self.mini)
+                    .on_hover_text("Modo compacto (Ctrl+M)")
+                    .clicked()
+                {
+                    self.toggle_mini(ui.ctx());
                 }
-                if toggle(ui, "SHUF", self.queue.shuffle()).clicked() {
+                if icon_toggle(ui, Icon::Shuffle, self.queue.shuffle())
+                    .on_hover_text("Shuffle (S)")
+                    .clicked()
+                {
                     let on = !self.queue.shuffle();
                     self.queue.set_shuffle(on);
                     self.queue_next();
                 }
-                if toggle(ui, "MINI", self.mini).clicked() {
-                    self.toggle_mini(ui.ctx());
+                let repeat_hint = match self.queue.repeat() {
+                    Repeat::Off => "Repetir: desligado (R)",
+                    Repeat::All => "Repetir: tudo (R)",
+                    Repeat::One => "Repetir: uma faixa (R)",
+                };
+                if icon_toggle(
+                    ui,
+                    Icon::Repeat(self.queue.repeat() == Repeat::One),
+                    self.queue.repeat() != Repeat::Off,
+                )
+                .on_hover_text(repeat_hint)
+                .clicked()
+                {
+                    let mode = self.queue.repeat().next();
+                    self.queue.set_repeat(mode);
+                    self.queue_next();
                 }
 
                 ui.add_space(10.0);
@@ -1198,7 +1220,7 @@ impl App {
                 }
                 // Volta pra janela normal. Precisa estar sempre visível: é o
                 // único jeito de sair sem saber do atalho de cor.
-                if toggle(ui, "◲", true)
+                if icon_toggle(ui, Icon::Mini, true)
                     .on_hover_text("Sair do modo compacto (Ctrl+M)")
                     .clicked()
                 {
@@ -1480,54 +1502,136 @@ fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, col
     );
 }
 
-/// Alternador em texto, no idioma de painel de equipamento: aceso quando
-/// ligado, apagado quando não. Sem cor — cor aqui competiria com o acento.
-/// Controle de volume mestre: uma barrinha preenchida, clique/arraste muda o
-/// valor. Preenchimento em `theme::DIM`, não no acento — o acento significa
-/// uma coisa só neste app (o que está tocando), e volume não é isso.
+/// Controle de volume mestre: trilho em pílula com uma bolinha arrastável,
+/// no espírito do slider de volume do Apple Music.
+///
+/// Única exceção deliberada aos cantos retos do resto da interface: um
+/// controle contínuo arrastável se lê melhor como objeto físico (um
+/// dial) do que como dado tabular, e é isso que o resto da UI é — linhas,
+/// réguas, caixas. Fica contida a este widget só; nada mais na interface
+/// ganha curva por causa dele.
+///
+/// Neutro, não no acento: o acento aqui significa uma coisa só (o que está
+/// tocando), e volume não é isso.
 ///
 /// Devolve o novo valor quando o usuário mexe; `None` quando só está sendo
 /// desenhado sem interação nesta chamada.
 fn volume_slider(ui: &mut egui::Ui, value: f32) -> Option<f32> {
-    let (rect, response) = ui.allocate_exact_size(vec2(52.0, 22.0), Sense::click_and_drag());
+    let value = value.clamp(0.0, 1.0);
+    let knob_radius = 5.0;
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(56.0, knob_radius * 2.0 + 2.0), Sense::click_and_drag());
     let painter = ui.painter();
 
-    let bar = Rect::from_center_size(rect.center(), vec2(rect.width(), 3.0));
-    painter.rect_filled(bar, CornerRadius::ZERO, theme::RULE);
+    // Trilho: pílula (raio = metade da altura), não retângulo — é a curva
+    // que só existe aqui.
+    let track_height = 4.0;
+    let track = Rect::from_center_size(rect.center(), vec2(rect.width(), track_height));
+    let radius = track_height / 2.0;
+    painter.rect_filled(track, radius, theme::RULE);
+
+    let knob_x = track.left() + track.width() * value;
     if value > 0.0 {
-        painter.rect_filled(
-            Rect::from_min_size(
-                bar.left_top(),
-                vec2(bar.width() * value.clamp(0.0, 1.0), bar.height()),
-            ),
-            CornerRadius::ZERO,
-            if response.hovered() {
-                theme::TEXT
-            } else {
-                theme::DIM
-            },
+        let filled = Rect::from_min_size(
+            track.left_top(),
+            vec2((knob_x - track.left()).max(track_height), track.height()),
         );
+        painter.rect_filled(filled, radius, theme::DIM);
     }
+
+    // A bolinha: mais clara em hover/arraste, para confirmar que pegou o
+    // controle certo antes de soltar.
+    let knob_color = if response.hovered() || response.dragged() {
+        theme::TEXT
+    } else {
+        theme::DIM
+    };
+    painter.circle_filled(pos2(knob_x, track.center().y), knob_radius, knob_color);
 
     if response.clicked() || response.dragged() {
         let pointer = response.interact_pointer_pos()?;
-        return Some(((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
+        return Some(((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0));
     }
     None
 }
 
-fn toggle(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        theme::mono(),
-        if active { theme::TEXT } else { theme::FAINT },
-    );
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(galley.size().x + 12.0, 26.0), Sense::click());
+/// A marca do Yasmine: cinco pétalas facetadas em torno de um núcleo vazado,
+/// desenhada como vetor — mesma peça que vira `assets/icon-*.png` para o
+/// ícone da janela e do atalho, mas aqui em Rust puro para escalar sem
+/// serrilhado em qualquer tamanho de tela.
+///
+/// Cada pétala é um quadrilátero convexo (`centro, meio-esquerda, ponta,
+/// meio-direita`): o preenchimento do egui só suporta polígono convexo, e um
+/// pentágono com base recuada — como o da versão SVG original — não garante
+/// isso. O núcleo vazado (losango na cor de fundo por cima de tudo) é o que
+/// dá o corte final sem precisar de curva.
+fn draw_mark(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
+    use std::f32::consts::{FRAC_PI_2, TAU};
+
+    const ACCENT_DIM: Color32 = Color32::from_rgb(0x5A, 0x40, 0x99);
+
+    for i in 0..5 {
+        let angle = -FRAC_PI_2 + i as f32 * TAU / 5.0;
+        let (dx, dy) = (angle.cos(), angle.sin());
+        let (px, py) = (-dy, dx);
+
+        let width = radius * 0.42;
+        let notch = 0.55;
+        let mid = pos2(
+            center.x + dx * radius * notch,
+            center.y + dy * radius * notch,
+        );
+        let tip = pos2(center.x + dx * radius, center.y + dy * radius);
+        let mid_l = pos2(mid.x + px * width, mid.y + py * width);
+        let mid_r = pos2(mid.x - px * width, mid.y - py * width);
+
+        let color = if i % 2 == 0 {
+            theme::ACCENT
+        } else {
+            ACCENT_DIM
+        };
+        painter.add(egui::Shape::convex_polygon(
+            vec![center, mid_l, tip, mid_r],
+            color,
+            Stroke::NONE,
+        ));
+    }
+
+    let core = radius * 0.16;
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            pos2(center.x, center.y - core),
+            pos2(center.x + core, center.y),
+            pos2(center.x, center.y + core),
+            pos2(center.x - core, center.y),
+        ],
+        theme::BG,
+        Stroke::NONE,
+    ));
+}
+
+/// Ícones dos alternadores da barra do player.
+///
+/// `Repeat(bool)` carrega se é "repetir uma" — desenha o mesmo laço com um
+/// "1" pequeno dentro, em vez de trocar de ícone inteiro (o formato do laço
+/// não muda, só o que está dentro dele).
+#[derive(Clone, Copy)]
+enum Icon {
+    Shuffle,
+    Repeat(bool),
+    Mini,
+}
+
+/// Alternador desenhado como ícone vetorial — mesma razão do transporte
+/// (`Glyph`): traço nítido garantido, sem depender da fonte do sistema ter
+/// o símbolo certo. Cantos retos, sem curva nenhuma: é ícone, não o slider
+/// de volume, e aqui a regra do resto da interface vale.
+fn icon_toggle(ui: &mut egui::Ui, icon: Icon, active: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(28.0, 26.0), Sense::click());
+    let painter = ui.painter();
 
     if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
     }
     let color = if active {
         theme::TEXT
@@ -1536,23 +1640,69 @@ fn toggle(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     } else {
         theme::FAINT
     };
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        theme::mono(),
-        color,
-    );
-    // Sublinhado de 1px marca o estado ligado sem gastar cor.
+
+    let c = rect.center();
+    let s = 5.0;
+
+    match icon {
+        Icon::Shuffle => {
+            // Dois caminhos cruzando — os dois trocando de lugar, que é o
+            // que shuffle faz de verdade. Sem seta: numa área de 28x26,
+            // ponta de seta vira ruído em vez de esclarecer.
+            let stroke = Stroke::new(1.4, color);
+            painter.line_segment([pos2(c.x - s, c.y - s), pos2(c.x + s, c.y + s)], stroke);
+            painter.line_segment([pos2(c.x - s, c.y + s), pos2(c.x + s, c.y - s)], stroke);
+        }
+        Icon::Repeat(one) => {
+            // Retângulo — um laço fechado, sem precisar de seta nem curva
+            // pra sugerir "roda e volta". O dial de dica (hover) que já
+            // existe explica o resto.
+            let r = Rect::from_center_size(c, vec2(s * 2.0, s * 1.7));
+            painter.rect_stroke(
+                r,
+                CornerRadius::ZERO,
+                Stroke::new(1.3, color),
+                egui::StrokeKind::Inside,
+            );
+            if one {
+                painter.text(c, Align2::CENTER_CENTER, "1", theme::small(), color);
+            }
+        }
+        Icon::Mini => {
+            // Retângulo grande com um pequeno preenchido no canto — o ícone
+            // universal de picture-in-picture, e cai de graça na linguagem
+            // de cantos retos.
+            let outer = Rect::from_center_size(c, vec2(s * 2.4, s * 2.0));
+            painter.rect_stroke(
+                outer,
+                CornerRadius::ZERO,
+                Stroke::new(1.2, color),
+                egui::StrokeKind::Inside,
+            );
+            let inset = 1.5;
+            let inner_size = vec2(s * 1.1, s * 0.9);
+            let inner = Rect::from_min_size(
+                pos2(
+                    outer.right() - inset - inner_size.x,
+                    outer.bottom() - inset - inner_size.y,
+                ),
+                inner_size,
+            );
+            painter.rect_filled(inner, CornerRadius::ZERO, color);
+        }
+    }
+
+    // Sublinhado de 1px marca ligado — mesma linguagem do toggle em texto.
     if active {
-        ui.painter().line_segment(
+        painter.line_segment(
             [
-                pos2(rect.left() + 6.0, rect.bottom() - 5.0),
-                pos2(rect.right() - 6.0, rect.bottom() - 5.0),
+                pos2(rect.left() + 5.0, rect.bottom() - 3.0),
+                pos2(rect.right() - 5.0, rect.bottom() - 3.0),
             ],
             Stroke::new(1.0, theme::TEXT),
         );
     }
+
     response
 }
 
