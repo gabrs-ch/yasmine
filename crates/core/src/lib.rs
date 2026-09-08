@@ -5,9 +5,12 @@
 
 pub mod art;
 pub mod db;
+pub mod fracidx;
+pub mod hash;
 pub mod library;
 pub mod model;
 pub mod norm;
+pub mod playlist;
 pub mod scan;
 
 #[cfg(test)]

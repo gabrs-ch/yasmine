@@ -31,7 +31,7 @@ use rayon::prelude::*;
 use rusqlite::Transaction;
 
 use crate::art::{ArtCache, ArtRef, KnownArt};
-use crate::db::{Db, Error, Result};
+use crate::db::{Db, Error, Result, now_ms};
 use crate::norm::{album_key, fold_key};
 
 /// Extensões consideradas áudio. Casa com o que o `symphonia` decodifica —
@@ -598,14 +598,6 @@ impl<'tx> Writer<'tx> {
     }
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|d| i64::try_from(d.as_millis()).ok())
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,7 +608,7 @@ mod tests {
 
     #[test]
     fn indexa_faixas_e_extrai_metadata() {
-        let env = ambiente("indexa");
+        let env = ambiente("scan-indexa");
         escreve(
             &env.musica
                 .join("Legião Urbana/Dois/01 - Eduardo e Mônica.mp3"),
@@ -660,7 +652,7 @@ mod tests {
     /// O caminho rápido: nada mudou, então nenhum arquivo é aberto.
     #[test]
     fn rescan_sem_mudanca_nao_reprocessa_nada() {
-        let env = ambiente("rescan");
+        let env = ambiente("scan-rescan");
         escreve(
             &env.musica.join("a/b/1.mp3"),
             "Um",
@@ -689,7 +681,7 @@ mod tests {
 
     #[test]
     fn arquivo_apagado_sai_do_indice_e_da_busca() {
-        let env = ambiente("apagado");
+        let env = ambiente("scan-apagado");
         let alvo = env.musica.join("a/1.mp3");
         escreve(&alvo, "Um", "Artista", "Álbum", None);
         escreve(
@@ -715,7 +707,7 @@ mod tests {
 
     #[test]
     fn arquivo_editado_e_reindexado_sem_duplicar() {
-        let env = ambiente("editado");
+        let env = ambiente("scan-editado");
         let alvo = env.musica.join("a/1.mp3");
         escreve(&alvo, "Título Antigo", "Artista", "Álbum", None);
 
@@ -746,7 +738,7 @@ mod tests {
     /// decodificada uma única vez.
     #[test]
     fn capa_do_album_e_decodificada_uma_vez_so() {
-        let env = ambiente("capa");
+        let env = ambiente("scan-capa");
         let capa = png([10, 40, 200]);
         for n in 1..=5 {
             escreve(
@@ -776,7 +768,7 @@ mod tests {
     /// busca, que não é limpo pelo CASCADE.
     #[test]
     fn apontar_outra_pasta_esquece_a_anterior() {
-        let env = ambiente("troca-de-pasta");
+        let env = ambiente("scan-troca-de-pasta");
         let outra = env.musica.parent().expect("pai").join("outra");
         escreve(
             &env.musica.join("a/1.mp3"),
@@ -805,7 +797,7 @@ mod tests {
 
     #[test]
     fn busca_encontra_sem_digitar_acento() {
-        let env = ambiente("busca");
+        let env = ambiente("scan-busca");
         escreve(
             &env.musica.join("a/1.mp3"),
             "Eduardo e Mônica",
@@ -833,7 +825,7 @@ mod tests {
 
     #[test]
     fn arquivo_sem_tag_ainda_entra_com_o_nome_do_arquivo() {
-        let env = ambiente("sem-tag");
+        let env = ambiente("scan-sem-tag");
         let alvo = env.musica.join("solta/Faixa Sem Tag.mp3");
         fs::create_dir_all(alvo.parent().expect("pai")).expect("criar dir");
         fs::write(&alvo, mp3_silencioso()).expect("gravar");

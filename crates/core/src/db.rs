@@ -121,6 +121,19 @@ impl Db {
     }
 }
 
+/// Agora, em milissegundos desde a época.
+///
+/// É o relógio de tudo que é gravado: `scanned_at`, `updated_at` das
+/// playlists, timestamps de LWW no sync.
+#[must_use]
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
