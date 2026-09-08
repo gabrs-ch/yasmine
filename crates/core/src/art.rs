@@ -29,6 +29,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use image::ImageEncoder;
 use image::codecs::jpeg::JpegEncoder;
 
+use crate::db::{Db, Result};
+
 /// Lado maior de cada miniatura: uma pra linha da lista, uma pro player.
 ///
 /// São *tetos*, não tamanhos fixos. Capa menor que o teto é reencodada no
@@ -192,9 +194,131 @@ fn write_jpeg(path: &Path, image: &image::RgbImage) -> std::io::Result<()> {
     fs::rename(&tmp, path)
 }
 
+/// Aponta a capa do álbum de `track` para o conteúdo de `blob` — o caso de
+/// "escolher uma imagem pra essa música", que na prática é sempre uma
+/// imagem de álbum.
+///
+/// `cache.store` só materializa as miniaturas em disco; quem grava a linha
+/// em `cover_art` sempre foi o escritor do scan (`scan.rs`), então essa
+/// função repete o mesmo `INSERT ... ON CONFLICT DO NOTHING` antes de
+/// apontar o álbum pra ela — sem isso, uma capa escolhida pelo usuário
+/// nunca teria linha na tabela.
+///
+/// Atualiza o álbum, não a faixa: é o álbum que carrega `art_id` no schema,
+/// então uma escolha aqui já vale pra toda faixa dele, do jeito que o
+/// usuário espera de "trocar a capa". Devolve `None` sem gravar nada se
+/// `blob` não for uma imagem decodificável.
+pub fn set_album_art(
+    db: &Db,
+    cache: &ArtCache,
+    track: crate::model::TrackId,
+    blob: &[u8],
+) -> Result<Option<ArtRef>> {
+    let Some(art) = cache.store(blob) else {
+        return Ok(None);
+    };
+
+    db.conn().execute(
+        "INSERT INTO cover_art (blob_hash, mime, width, height) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (blob_hash) DO NOTHING",
+        rusqlite::params![art.hash.as_slice(), "image/jpeg", art.width, art.height],
+    )?;
+    db.conn().execute(
+        "UPDATE album SET art_id = (
+             SELECT id FROM cover_art WHERE blob_hash = ?1
+         )
+         WHERE id = (SELECT album_id FROM track WHERE id = ?2)",
+        rusqlite::params![art.hash.as_slice(), track.0],
+    )?;
+    Ok(Some(art))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::library::{Sort, view};
+    use crate::scan::scan;
+    use crate::testutil::{ambiente, escreve};
+
+    /// Duas faixas do mesmo álbum, pra provar que `set_album_art` muda a
+    /// capa das duas de uma vez — é o álbum que carrega `art_id`, não a
+    /// faixa.
+    fn album_com_duas_faixas(nome: &str) -> (Db, crate::testutil::Ambiente) {
+        let env = ambiente(nome);
+        escreve(&env.musica.join("a/01.mp3"), "Um", "Artista", "Álbum", None);
+        escreve(
+            &env.musica.join("a/02.mp3"),
+            "Dois",
+            "Artista",
+            "Álbum",
+            None,
+        );
+        let mut db = Db::open_in_memory().expect("abrir");
+        let cache = ArtCache::new(env.cache.clone());
+        scan(&mut db, &env.musica, &cache).expect("escanear");
+        (db, env)
+    }
+
+    #[test]
+    fn set_album_art_muda_a_capa_das_duas_faixas() {
+        let (db, env) = album_com_duas_faixas("set-art");
+        let ids = view(&db, Sort::ArtistAlbum).expect("view");
+
+        let cache = ArtCache::new(env.cache);
+        let blob = png_valido();
+        let art = set_album_art(&db, &cache, ids[0], &blob)
+            .expect("gravar capa")
+            .expect("png válido");
+
+        let hashes: Vec<Option<Vec<u8>>> = ids
+            .iter()
+            .map(|id| {
+                db.conn()
+                    .query_row(
+                        "SELECT ca.blob_hash FROM track t
+                         JOIN album a ON a.id = t.album_id
+                         JOIN cover_art ca ON ca.id = a.art_id
+                         WHERE t.id = ?1",
+                        [id.0],
+                        |r| r.get(0),
+                    )
+                    .ok()
+            })
+            .collect();
+
+        assert_eq!(hashes.len(), 2);
+        assert!(
+            hashes
+                .iter()
+                .all(|h| h.as_deref() == Some(art.hash.as_slice()))
+        );
+    }
+
+    #[test]
+    fn set_album_art_em_faixa_sem_album_nao_quebra() {
+        let (db, env) = album_com_duas_faixas("set-art-sem-album");
+        let cache = ArtCache::new(env.cache);
+
+        db.conn()
+            .execute("UPDATE track SET album_id = NULL", [])
+            .expect("desassociar álbum");
+
+        let ids = view(&db, Sort::ArtistAlbum).expect("view");
+        // Não deve dar erro, só não afeta linha nenhuma.
+        set_album_art(&db, &cache, ids[0], &png_valido()).expect("não deveria falhar");
+    }
+
+    #[test]
+    fn set_album_art_com_blob_invalido_devolve_none_sem_gravar() {
+        let (db, env) = album_com_duas_faixas("set-art-invalido");
+        let cache = ArtCache::new(env.cache);
+        let ids = view(&db, Sort::ArtistAlbum).expect("view");
+
+        let resultado = set_album_art(&db, &cache, ids[0], b"isto nao e uma imagem")
+            .expect("não deveria falhar");
+        assert!(resultado.is_none());
+    }
 
     /// PNG 4x4 vermelho, gerado uma vez e colado aqui para o teste não
     /// depender de arquivo externo.

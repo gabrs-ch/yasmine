@@ -406,6 +406,31 @@ impl App {
         self.set_root(folder);
     }
 
+    /// Deixa o usuário escolher uma imagem do disco pra capa do álbum de
+    /// `track`. Vale pra todas as faixas do álbum, não só essa — é o álbum
+    /// que carrega a capa no índice.
+    fn pick_album_art(&mut self, track: TrackId) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Escolha uma imagem para a capa")
+            .add_filter("Imagem", &["jpg", "jpeg", "png", "webp", "bmp", "gif"])
+            .pick_file()
+        else {
+            return;
+        };
+
+        let Ok(bytes) = std::fs::read(&path) else {
+            self.status = format!("não consegui ler {}", path.display());
+            return;
+        };
+
+        let cache = ArtCache::new(self.paths.cache.clone());
+        match player_core::art::set_album_art(&self.db, &cache, track, &bytes) {
+            Ok(Some(_)) => self.reload(),
+            Ok(None) => self.status = "esse arquivo não é uma imagem válida".into(),
+            Err(err) => self.status = format!("não consegui salvar a capa: {err}"),
+        }
+    }
+
     /// Passa a vigiar `folder`, trocando o vigia anterior.
     fn watch(&mut self, folder: &Path) {
         if self.watcher.as_ref().is_some_and(|w| w.root() == folder) {
@@ -837,6 +862,8 @@ impl App {
             ("ÁLBUM", cols.album(header)),
             ("DUR", cols.duration(header)),
         ] {
+            // A coluna de capa não tem cabeçalho — imagem não precisa de
+            // rótulo, e "CAPA" ocuparia espaço sem informar nada.
             painter.text(
                 pos2(rect.left(), header.center().y),
                 Align2::LEFT_CENTER,
@@ -877,24 +904,37 @@ impl App {
                     let is_selected = self.selected == Some(index);
                     let painter = ui.painter();
 
-                    // Zebra sutil: ajuda a percorrer uma lista longa sem
-                    // acrescentar nenhuma linha ou borda.
-                    if index % 2 == 1 {
-                        painter.rect_filled(rect, CornerRadius::ZERO, theme::PANEL);
-                    }
-                    if is_selected {
-                        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
-                    }
-                    if response.hovered() && !is_selected {
-                        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+                    // Destaque recuado e arredondado — não mais um retângulo
+                    // esticado de ponta a ponta. Sem zebra: capa + espaço já
+                    // dão o suficiente pra olho seguir a linha numa lista
+                    // grande, e listras junto com capa ficaria carregado.
+                    if is_selected || (response.hovered() && !is_selected) {
+                        let highlight = rect.shrink2(vec2(4.0, 2.0));
+                        painter.rect_filled(
+                            highlight,
+                            CornerRadius::same(theme::RADIUS),
+                            theme::HOVER,
+                        );
                     }
                     if is_playing {
                         // Marca de 2px na canaleta esquerda: o acento aparece
                         // aqui e na barra de progresso, em mais nenhum lugar.
+                        // Fica rente à borda, fora do destaque recuado.
                         painter.rect_filled(
                             Rect::from_min_size(rect.left_top(), vec2(2.0, rect.height())),
                             CornerRadius::ZERO,
                             theme::ACCENT,
+                        );
+                    }
+
+                    let art_rect = cols.art(rect);
+                    if let Some(texture) = row.art_hash.and_then(|hash| self.art.texture(&hash)) {
+                        rounded_image(painter, art_rect, texture, theme::RADIUS_SM);
+                    } else {
+                        painter.rect_filled(
+                            art_rect,
+                            CornerRadius::same(theme::RADIUS_SM),
+                            theme::PANEL,
                         );
                     }
 
@@ -984,6 +1024,12 @@ impl App {
                                 self.remove_from_playlist(index);
                                 ui.close();
                             }
+                        }
+
+                        ui.separator();
+                        if ui.button("Escolher capa do álbum…").clicked() {
+                            self.pick_album_art(track);
+                            ui.close();
                         }
                     });
                 }
@@ -1121,14 +1167,23 @@ impl App {
         self.progress_bar(ui, state);
     }
 
-    /// Barra de progresso: 3px, sem cantos, o segundo e último uso do acento
-    /// além da marca da faixa tocando. Compartilhada entre o player normal
-    /// e o modo compacto — a única diferença entre os dois é a largura.
+    /// Barra de progresso: trilho em pílula, igual ao slider de volume — o
+    /// segundo e último uso do acento além da marca da faixa tocando. A
+    /// bolinha só aparece em hover/arraste, pra não pesar visualmente numa
+    /// barra que fica sempre visível durante o playback inteiro.
     fn progress_bar(&mut self, ui: &mut egui::Ui, state: player_audio::PlaybackState) {
         let width = ui.available_width();
-        let (rect, response) = ui.allocate_exact_size(vec2(width, 3.0), Sense::click_and_drag());
+        let knob_radius = 5.0;
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(width, knob_radius * 2.0 + 2.0),
+            Sense::click_and_drag(),
+        );
         let painter = ui.painter();
-        painter.rect_filled(rect, CornerRadius::ZERO, theme::RULE);
+
+        let track_height = 4.0;
+        let track = Rect::from_center_size(rect.center(), vec2(rect.width(), track_height));
+        let radius = track_height / 2.0;
+        painter.rect_filled(track, radius, theme::RULE);
 
         let fraction = state
             .duration
@@ -1136,15 +1191,16 @@ impl App {
             .map_or(0.0, |d| {
                 (state.position.as_secs_f32() / d.as_secs_f32()).clamp(0.0, 1.0)
             });
+        let knob_x = track.left() + track.width() * fraction;
         if fraction > 0.0 {
-            painter.rect_filled(
-                Rect::from_min_size(
-                    rect.left_top(),
-                    vec2(rect.width() * fraction, rect.height()),
-                ),
-                CornerRadius::ZERO,
-                theme::ACCENT,
+            let filled = Rect::from_min_size(
+                track.left_top(),
+                vec2((knob_x - track.left()).max(track_height), track.height()),
             );
+            painter.rect_filled(filled, radius, theme::ACCENT);
+        }
+        if response.hovered() || response.dragged() {
+            painter.circle_filled(pos2(knob_x, track.center().y), knob_radius, theme::ACCENT);
         }
 
         if let (true, Some(total), Some(pointer)) = (
@@ -1152,7 +1208,7 @@ impl App {
             state.duration,
             response.interact_pointer_pos(),
         ) {
-            let target = ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+            let target = ((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0);
             self.engine
                 .seek(Duration::from_secs_f32(total.as_secs_f32() * target));
         }
@@ -1163,23 +1219,19 @@ impl App {
     fn draw_cover(&mut self, ui: &mut egui::Ui, size: f32) {
         let (cover, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
         let painter = ui.painter();
-        painter.rect_filled(cover, CornerRadius::ZERO, theme::PANEL);
+        let radius = theme::RADIUS;
+        painter.rect_filled(cover, CornerRadius::same(radius), theme::PANEL);
         let texture = self
             .now
             .as_ref()
             .and_then(|row| row.art_hash)
             .and_then(|hash| self.art.texture(&hash));
         if let Some(texture) = texture {
-            painter.image(
-                texture,
-                cover,
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
+            rounded_image(painter, cover, texture, radius);
         } else {
             painter.rect_stroke(
                 cover,
-                CornerRadius::ZERO,
+                CornerRadius::same(radius),
                 Stroke::new(1.0, theme::RULE),
                 egui::StrokeKind::Inside,
             );
@@ -1423,6 +1475,7 @@ impl eframe::App for App {
 /// proporcionais onde não é.
 struct Columns {
     num: f32,
+    art: f32,
     title: f32,
     artist: f32,
     album: f32,
@@ -1431,13 +1484,17 @@ struct Columns {
 
 impl Columns {
     const PAD: f32 = 10.0;
+    /// Lado da miniatura — cabe com folga dentro de `theme::ROW_HEIGHT`.
+    const ART_SIZE: f32 = 32.0;
 
     fn new(width: f32) -> Self {
-        let num = 38.0;
+        let num = 28.0;
+        let art = Self::ART_SIZE + Self::PAD;
         let duration = 52.0;
-        let rest = (width - num - duration - Self::PAD * 2.0).max(120.0);
+        let rest = (width - num - art - duration - Self::PAD * 2.0).max(120.0);
         Self {
             num,
+            art,
             title: rest * 0.42,
             artist: rest * 0.30,
             album: rest * 0.28,
@@ -1455,25 +1512,37 @@ impl Columns {
     fn num(&self, rect: Rect) -> Rect {
         Self::slice(rect, 0.0, self.num)
     }
+    /// Quadrado da miniatura, centrado verticalmente na linha — não usa
+    /// `slice` porque a arte é quadrada, não uma faixa de texto.
+    fn art(&self, rect: Rect) -> Rect {
+        let x = rect.left() + self.num + Columns::PAD;
+        Rect::from_center_size(
+            pos2(x + Self::ART_SIZE / 2.0, rect.center().y),
+            vec2(Self::ART_SIZE, Self::ART_SIZE),
+        )
+    }
     fn title(&self, rect: Rect) -> Rect {
-        Self::slice(rect, self.num, self.title)
+        Self::slice(rect, self.num + self.art, self.title)
     }
     fn artist(&self, rect: Rect) -> Rect {
-        Self::slice(rect, self.num + self.title, self.artist)
+        Self::slice(rect, self.num + self.art + self.title, self.artist)
     }
     fn album(&self, rect: Rect) -> Rect {
-        Self::slice(rect, self.num + self.title + self.artist, self.album)
+        Self::slice(
+            rect,
+            self.num + self.art + self.title + self.artist,
+            self.album,
+        )
     }
     fn duration(&self, rect: Rect) -> Rect {
         Self::slice(
             rect,
-            self.num + self.title + self.artist + self.album,
+            self.num + self.art + self.title + self.artist + self.album,
             self.duration,
         )
     }
 }
 
-/// Texto de uma célula, truncado na largura da coluna.
 /// Uma linha da sidebar: rótulo alinhado à esquerda, marca de acento quando
 /// ativa. Mesma linguagem visual da lista de faixas — a régua de 2px que
 /// destaca "o que está tocando" aqui destaca "o que está selecionado".
@@ -1483,7 +1552,8 @@ fn sidebar_row(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     let painter = ui.painter();
 
     if active || response.hovered() {
-        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+        let highlight = rect.shrink2(vec2(4.0, 2.0));
+        painter.rect_filled(highlight, CornerRadius::same(theme::RADIUS), theme::HOVER);
     }
     if active {
         painter.rect_filled(
@@ -1503,6 +1573,22 @@ fn sidebar_row(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     response
 }
 
+/// Desenha `texture` dentro de `rect` com cantos arredondados — imagem com
+/// máscara de raio, não o retângulo reto que `Painter::image` desenha.
+/// `RectShape` do epaint aceita textura (`brush`) e `corner_radius` juntos;
+/// é essa combinação que faz a capa ficar arredondada sem cortar a imagem
+/// à mão.
+fn rounded_image(painter: &egui::Painter, rect: Rect, texture: egui::TextureId, radius: u8) {
+    let mut shape =
+        egui::epaint::RectShape::filled(rect, CornerRadius::same(radius), Color32::WHITE);
+    shape.brush = Some(std::sync::Arc::new(egui::epaint::Brush {
+        fill_texture_id: texture,
+        uv: Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+    }));
+    painter.add(shape);
+}
+
+/// Texto de uma célula, truncado na largura da coluna.
 fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, color: Color32) {
     if text.is_empty() {
         return;
@@ -1591,14 +1677,15 @@ enum Icon {
 
 /// Alternador desenhado como ícone vetorial — mesma razão do transporte
 /// (`Glyph`): traço nítido garantido, sem depender da fonte do sistema ter
-/// o símbolo certo. Cantos retos, sem curva nenhuma: é ícone, não o slider
-/// de volume, e aqui a regra do resto da interface vale.
+/// o símbolo certo. O fundo de hover arredonda como o resto da interface;
+/// o desenho do ícone em si fica reto — pictograma pequeno arredondado vira
+/// borrão em vez de ficar mais bonito.
 fn icon_toggle(ui: &mut egui::Ui, icon: Icon, active: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(28.0, 26.0), Sense::click());
     let painter = ui.painter();
 
     if response.hovered() {
-        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+        painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_SM), theme::HOVER);
     }
     let color = if active {
         theme::TEXT
@@ -1690,7 +1777,7 @@ fn transport(ui: &mut egui::Ui, glyph: Glyph) -> egui::Response {
     let painter = ui.painter();
 
     if response.hovered() {
-        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+        painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_SM), theme::HOVER);
     }
     let color = if response.hovered() {
         theme::TEXT

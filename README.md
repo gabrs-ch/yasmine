@@ -170,37 +170,48 @@ resolve a reparentagem corretamente e virou o método padrão de ali em diante.
 
 ## Interface
 
-Direção visual: software de áudio profissional, não app de streaming. Preto
-quase absoluto, cantos retos, zero sombra, réguas de 1px, linhas de 22px
-(~25 faixas visíveis sem rolar), mono nos números para as colunas alinharem.
+Direção visual: Apple Music, só que escuro. Substitui a direção original
+("software de áudio profissional", cantos retos em tudo) — densidade extrema
+sem capa nenhuma lia como planilha, não como player, e essa foi a queixa que
+motivou a virada. Preto quase absoluto continua, mas cantos arredondados
+(`theme::RADIUS`, um número só, usado em todo lugar) viraram a regra, não
+exceção pontual; linhas mais altas (44px, contra 22px antes) dão espaço pra
+capa respirar; réguas de 1px e mono nos números continuam.
 
-O roxo/azul da identidade entra como **acento único**, em exatamente dois
-lugares: a marca de 2px na faixa tocando e o preenchimento da barra de
-progresso. Gradiente roxo espalhado é o que faz uma interface parecer
-genérica; um acento contido faz o oposto.
+O roxo/azul da identidade continua **acento único** — a marca de 2px na
+faixa tocando e o preenchimento da barra de progresso — mas parou de ser a
+única coisa arredondada da interface.
 
-A lista não mostra capa, de propósito: 25 miniaturas subindo e descendo a cada
-rolagem custariam textura à toa, e a densidade é o ponto. A capa aparece na
-barra do player e no modo compacto.
+A capa aparece em toda parte agora: miniatura arredondada em cada linha da
+lista (carregada pelo `ArtLoader` já existente, sem custo extra — o cache de
+texturas já era dimensionado pra isso), no player, no modo compacto, e —
+novo — pode ser escolhida manualmente: botão direito numa faixa → "Escolher
+capa do álbum…" abre um seletor nativo de arquivo, decodifica pelo mesmo
+`ArtCache` do scan (dedup por hash, miniaturas geradas do mesmo jeito) e
+grava no álbum inteiro, não só na faixa clicada — é o álbum que carrega a
+capa no índice, então uma escolha vale pra toda faixa dele.
 
-A sidebar de playlists segue a mesma linguagem: linha plana, marca de acento
-de 2px em quem está ativo — biblioteca ou uma playlist, nunca as duas.
+A sidebar de playlists segue a mesma linguagem: linha alta, destaque recuado
+e arredondado, marca de acento de 2px em quem está ativo — biblioteca ou uma
+playlist, nunca as duas.
 
-O controle de volume mestre é a única exceção deliberada aos cantos retos:
-trilho em pílula com uma bolinha arrastável, no espírito do slider do Apple
-Music — um controle contínuo se lê melhor como objeto físico do que como
-dado tabular, e fica contido a este widget só. Cor neutra, não o acento
-— volume não é "o que está tocando". Não aparece no modo compacto: a
-largura de 340px já está no limite só com capa, texto e transporte.
+O controle de volume mestre e a barra de progresso são pílula com bolinha
+arrastável, no espírito do slider do Apple Music — um controle contínuo se
+lê melhor como objeto físico do que como dado tabular. Cor neutra no volume
+(não é "o que está tocando"), acento na barra de progresso (é). A bolinha da
+barra de progresso só aparece em hover/arraste, pra não pesar visualmente
+numa barra que fica sempre visível durante o playback inteiro.
 
 MINI, SHUF e RPT são ícone, não texto — mesma razão do transporte (Fase 1):
 forma vetorial garante o traço nítido, sem depender de a fonte do sistema
-ter o símbolo certo.
+ter o símbolo certo. O fundo de hover desses botões arredonda como o resto;
+o desenho do ícone em si fica reto — pictograma pequeno arredondado vira
+borrão em vez de ficar mais bonito.
 
 **A marca do Yasmine** é uma nota musical brotando folhas — arte fornecida
-pelo usuário, cor chapada, sem gradiente. É a única peça da interface com
-curva de verdade: "cantos retos" é regra pra elementos da interface (botões,
-linhas, divisores), não uma lei universal pra identidade visual em si.
+pelo usuário, cor chapada, sem gradiente. Tem curva de verdade (a nota, as
+folhas), o que hoje é consistente com o resto arredondado; antes da virada
+pra essa direção, era exceção deliberada.
 [`assets/icon-256.png`](crates/pc-app/assets/icon-256.png) é o arquivo único
 — janela, atalho da área de trabalho e tela de boas-vindas do app carregam
 o mesmo PNG (com transparência) como textura, em vez de cada lugar ter sua

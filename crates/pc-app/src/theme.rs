@@ -1,18 +1,19 @@
 //! Paleta e estilo.
 //!
-//! A direção é software de áudio profissional, não app de streaming: preto
-//! quase absoluto, cantos retos, zero sombra, réguas de 1px, densidade alta.
+//! Direção: Apple Music, só que escuro — cantos arredondados, capa presente
+//! em todo lugar (lista, player, sidebar), espaçamento confortável. Isso
+//! substitui a direção anterior ("software de áudio profissional", cantos
+//! retos em tudo): densidade extrema lia como planilha, não como player.
 //!
-//! O roxo/azul da identidade entra como **acento único**, nunca como
-//! gradiente nem como cor de fundo — ele aparece na faixa tocando e na barra
-//! de progresso, e em mais nada. Roxo espalhado é justamente o que faz uma
-//! interface parecer genérica.
+//! O roxo/azul da identidade continua **acento único** — faixa tocando e
+//! barra de progresso — mas arredondamento deixou de ser exceção pontual
+//! (só o slider de volume) para ser a regra: botões, linhas, capas, sidebar.
 
 use eframe::egui::{self, Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle};
 
 pub const BG: Color32 = Color32::from_rgb(0x0A, 0x0A, 0x0C);
 pub const PANEL: Color32 = Color32::from_rgb(0x0E, 0x0E, 0x12);
-pub const HOVER: Color32 = Color32::from_rgb(0x16, 0x16, 0x1C);
+pub const HOVER: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x21);
 pub const RULE: Color32 = Color32::from_rgb(0x1C, 0x1C, 0x23);
 pub const TEXT: Color32 = Color32::from_rgb(0xCB, 0xCB, 0xD4);
 pub const DIM: Color32 = Color32::from_rgb(0x6B, 0x6B, 0x78);
@@ -20,9 +21,16 @@ pub const FAINT: Color32 = Color32::from_rgb(0x43, 0x43, 0x4E);
 /// O acento. Um só, e usado com parcimônia.
 pub const ACCENT: Color32 = Color32::from_rgb(0x7C, 0x5C, 0xFF);
 
-/// Altura de uma linha da lista. 22px cabem ~25 faixas numa janela padrão —
-/// menos rolagem numa biblioteca de 50 mil.
-pub const ROW_HEIGHT: f32 = 22.0;
+/// Raio padrão de arredondamento — linhas da lista, botões, sidebar, capas
+/// pequenas. Único número, usado em todo lugar, para o arredondamento não
+/// virar um mosaico de valores diferentes.
+pub const RADIUS: u8 = 8;
+/// Raio menor, para elementos pequenos (miniatura de capa na lista).
+pub const RADIUS_SM: u8 = 4;
+
+/// Altura de uma linha da lista. Maior que a densidade "planilha" de antes —
+/// espaço suficiente pra capa respirar, no espírito do Apple Music.
+pub const ROW_HEIGHT: f32 = 44.0;
 
 pub fn body() -> FontId {
     FontId::new(13.0, FontFamily::Proportional)
@@ -54,8 +62,6 @@ pub fn apply(ctx: &egui::Context) {
     visuals.selection.bg_fill = HOVER;
     visuals.selection.stroke = Stroke::new(1.0, ACCENT);
 
-    // Cantos retos em tudo. Arredondamento é o tique visual que faz uma
-    // interface parecer template.
     for widget in [
         &mut visuals.widgets.noninteractive,
         &mut visuals.widgets.inactive,
@@ -63,7 +69,7 @@ pub fn apply(ctx: &egui::Context) {
         &mut visuals.widgets.active,
         &mut visuals.widgets.open,
     ] {
-        widget.corner_radius = CornerRadius::ZERO;
+        widget.corner_radius = CornerRadius::same(RADIUS);
         widget.bg_fill = PANEL;
         widget.weak_bg_fill = PANEL;
         widget.bg_stroke = Stroke::new(1.0, RULE);
@@ -75,11 +81,14 @@ pub fn apply(ctx: &egui::Context) {
     visuals.widgets.active.bg_fill = HOVER;
     visuals.widgets.active.weak_bg_fill = HOVER;
 
-    // Sem sombra nenhuma.
+    // Sem sombra nenhuma — arredondado não precisa de sombra pra não parecer
+    // chapado; o contraste de fundo já faz esse trabalho.
     visuals.window_shadow = egui::epaint::Shadow::NONE;
     visuals.popup_shadow = egui::epaint::Shadow::NONE;
+    // A janela do SO não arredonda (é o gerenciador de janelas quem manda
+    // nisso); menus e popups, sim — é onde o Apple Music arredonda também.
     visuals.window_corner_radius = CornerRadius::ZERO;
-    visuals.menu_corner_radius = CornerRadius::ZERO;
+    visuals.menu_corner_radius = CornerRadius::same(RADIUS);
 
     style.visuals = visuals;
     style.spacing.item_spacing = egui::vec2(8.0, 4.0);
