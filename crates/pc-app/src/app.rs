@@ -663,7 +663,10 @@ impl App {
     // -------------------------------------------------------------------------
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        // `horizontal` não centraliza no eixo vertical — só aloca a altura
+        // do conteúdo e larga ele no topo da faixa de 34px, colado na
+        // borda. `horizontal_centered` aloca a faixa inteira e centraliza.
+        ui.horizontal_centered(|ui| {
             ui.add_space(4.0);
             if ui.button("Pasta…").clicked() {
                 self.pick_folder();
@@ -682,6 +685,12 @@ impl App {
             }
 
             ui.add_space(8.0);
+            // Largura responsiva, não fixa: numa janela estreita, uma caixa
+            // de busca de 220px sobra do espaço disponível e invade o texto
+            // da direita — as duas são desenhadas sem uma saber da outra,
+            // então o resultado é sobreposição, não quebra de linha. Reserva
+            // uma folga pro texto da direita antes de decidir a largura.
+            let search_width = (ui.available_width() - 210.0).clamp(60.0, 220.0);
             // A busca só filtra a biblioteca — dentro de uma playlist ela
             // ficaria filtrando contra o índice errado. Desabilitada, não
             // escondida: o texto continua ali para quando o usuário voltar.
@@ -689,7 +698,7 @@ impl App {
             ui.add_enabled_ui(in_library, |ui| {
                 let search = ui.add(
                     egui::TextEdit::singleline(&mut self.query)
-                        .desired_width(220.0)
+                        .desired_width(search_width)
                         .hint_text("buscar"),
                 );
                 if std::mem::take(&mut self.focus_search) && in_library {
@@ -1436,7 +1445,7 @@ impl eframe::App for App {
                     .exact_size(20.0)
                     .frame(egui::Frame::new().fill(theme::BG))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_centered(|ui| {
                             ui.add_space(8.0);
                             ui.label(
                                 egui::RichText::new(&self.status)
