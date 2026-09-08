@@ -146,6 +146,12 @@ pub struct App {
     scan: Option<ScanJob>,
     /// Chegou mudança do disco enquanto um scan já rodava.
     rescan_pending: bool,
+    /// Arquivos que vieram de "abrir com" do gerenciador de arquivos,
+    /// esperando o scan (disparado por `set_root`) terminar de indexar a
+    /// pasta antes de virarem `TrackId` e tocarem. `None` no caminho normal
+    /// — abrir sem argumento nenhum, ou só uma pasta pra apontar a
+    /// biblioteca sem tocar nada.
+    pending_play: Option<Vec<PathBuf>>,
     watcher: Option<Watcher>,
     status: String,
     focus_search: bool,
@@ -163,8 +169,45 @@ pub struct App {
     loudness_running: Arc<AtomicBool>,
 }
 
+/// O que a linha de comando pediu pra abrir.
+///
+/// "Abrir com" do gerenciador de arquivos entrega um ou mais caminhos de
+/// *arquivo* (nunca uma pasta) — um clique numa faixa só manda um argumento,
+/// selecionar várias e abrir todas de uma vez manda vários. Abrir a partir
+/// de um atalho ou da linha de comando com uma pasta continua valendo,
+/// exatamente como antes.
+enum Opened {
+    Nothing,
+    /// Só aponta a biblioteca pra cá — comportamento de sempre, nada toca
+    /// sozinho.
+    Folder(PathBuf),
+    /// Aponta a biblioteca pra pasta que contém os arquivos e toca eles,
+    /// nessa ordem, assim que o scan terminar de indexá-la.
+    Files {
+        folder: PathBuf,
+        files: Vec<PathBuf>,
+    },
+}
+
+impl Opened {
+    fn from_args(args: &[PathBuf]) -> Self {
+        if args.len() == 1 && args[0].is_dir() {
+            return Self::Folder(args[0].clone());
+        }
+        let files: Vec<PathBuf> = args.iter().filter(|p| p.is_file()).cloned().collect();
+        let Some(folder) = files
+            .first()
+            .and_then(|f| f.parent())
+            .map(Path::to_path_buf)
+        else {
+            return Self::Nothing;
+        };
+        Self::Files { folder, files }
+    }
+}
+
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, folder: Option<PathBuf>) -> Result<Self, String> {
+    pub fn new(cc: &eframe::CreationContext<'_>, args: &[PathBuf]) -> Result<Self, String> {
         theme::apply(&cc.egui_ctx);
 
         let paths = Paths::resolve().map_err(|err| err.to_string())?;
@@ -213,6 +256,7 @@ impl App {
             now: None,
             scan: None,
             rescan_pending: false,
+            pending_play: None,
             watcher: None,
             status: String::new(),
             focus_search: false,
@@ -239,14 +283,21 @@ impl App {
         app.engine.set_volume(saved_volume);
 
         app.reload();
-        match folder {
+        match Opened::from_args(args) {
             // Pasta vinda da linha de comando manda sobre a guardada.
-            Some(folder) => app.set_root(folder),
+            Opened::Folder(folder) => app.set_root(folder),
+            // "Abrir com" de um ou mais arquivos: aponta a biblioteca pra
+            // pasta deles (mesmo caminho de sempre — indexar é indexar) e
+            // guarda quais tocar assim que o scan terminar.
+            Opened::Files { folder, files } => {
+                app.set_root(folder);
+                app.pending_play = Some(files);
+            }
             // Reescaneia a pasta guardada em segundo plano. Um rescan de
             // biblioteca intacta custa décimos de segundo e não abre arquivo
             // nenhum, então sai mais barato que pedir ao usuário que clique
             // em "Reescanear" — e músicas novas simplesmente aparecem.
-            None => {
+            Opened::Nothing => {
                 if let Some(root) = app.root.clone() {
                     app.watch(&root);
                     app.start_scan(root);
@@ -546,6 +597,13 @@ impl App {
                 let _ = player_core::playlist_folder::sync_all(&mut self.db);
                 self.reload();
                 self.spawn_loudness_fill();
+
+                // "Abrir com" de um ou mais arquivos: agora que o scan
+                // indexou a pasta deles, resolve os caminhos pra `TrackId`
+                // e começa a tocar.
+                if let Some(files) = self.pending_play.take() {
+                    self.play_files(&files);
+                }
             }
             Err(err) => self.status = format!("falha no scan: {err}"),
         }
@@ -594,6 +652,29 @@ impl App {
     // -------------------------------------------------------------------------
     // Playback
     // -------------------------------------------------------------------------
+
+    /// Toca os arquivos vindos de "abrir com" — já indexados pelo scan que
+    /// `Opened::Files` disparou. A lista visível vira exatamente esses
+    /// arquivos, na ordem em que o SO os entregou: é o que a pessoa
+    /// selecionou no gerenciador de arquivos, não a biblioteca inteira.
+    fn play_files(&mut self, files: &[PathBuf]) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        let tracks: Vec<TrackId> = files
+            .iter()
+            .filter_map(|file| library::find_by_absolute_path(&self.db, &root, file).ok()?)
+            .collect();
+        if tracks.is_empty() {
+            self.status = "não consegui indexar os arquivos abertos".into();
+            return;
+        }
+
+        self.source = Source::Library;
+        self.view = tracks;
+        self.view_positions.clear();
+        self.play_at(0);
+    }
 
     /// Toca a partir de uma linha da lista, enfileirando o que está à vista.
     ///

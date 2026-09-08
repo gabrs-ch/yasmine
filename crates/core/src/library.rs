@@ -12,7 +12,7 @@
 //! fica progressivamente mais lento. Buscar por id é O(log n) sempre.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rusqlite::types::Value;
 
@@ -195,6 +195,33 @@ pub fn playback_info(db: &Db, id: TrackId) -> Result<Option<PlaybackInfo>> {
     found.next().transpose().map_err(Into::into)
 }
 
+/// Acha o id de uma faixa pelo caminho absoluto do arquivo — o caso de
+/// "abrir com" do gerenciador de arquivos: o SO entrega um caminho, não um
+/// id. `root` é a raiz já escaneada (o chamador garante isso antes de
+/// chamar); `None` quando `file` não está sob `root` ou ainda não foi
+/// indexado (arquivo apagado entre o duplo clique e o fim do scan, por
+/// exemplo).
+pub fn find_by_absolute_path(db: &Db, root: &Path, file: &Path) -> Result<Option<TrackId>> {
+    let Ok(rel) = file.strip_prefix(root) else {
+        return Ok(None);
+    };
+    let rel_path = rel
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect::<Vec<_>>()
+        .join("/");
+
+    let mut stmt = db.conn().prepare_cached(
+        "SELECT t.id FROM track t
+         JOIN library_root r ON r.id = t.root_id
+         WHERE r.path = ?1 AND t.rel_path = ?2",
+    )?;
+    let mut found = stmt.query_map(rusqlite::params![root.to_string_lossy(), rel_path], |row| {
+        Ok(TrackId(row.get(0)?))
+    })?;
+    found.next().transpose().map_err(Into::into)
+}
+
 pub fn stats(db: &Db) -> Result<Stats> {
     Ok(db.conn().query_row(
         "SELECT (SELECT count(*) FROM track),
@@ -341,6 +368,31 @@ mod tests {
             .expect("faixa existe");
         assert_eq!(info.gain_db, None);
         assert_eq!(info.peak, None);
+    }
+
+    #[test]
+    fn find_by_absolute_path_acha_a_faixa_indexada() {
+        let (db, env) = biblioteca("abrir-com");
+        let ids = view(&db, Sort::ArtistAlbum).expect("view");
+        let esperado = ids[0];
+        let info = playback_info(&db, esperado)
+            .expect("consultar")
+            .expect("faixa existe");
+
+        let achado = find_by_absolute_path(&db, &env.musica, &info.path)
+            .expect("consultar")
+            .expect("arquivo está na biblioteca");
+        assert_eq!(achado, esperado);
+    }
+
+    #[test]
+    fn find_by_absolute_path_fora_da_raiz_devolve_none() {
+        let (db, env) = biblioteca("abrir-com-fora");
+        let fora = env.musica.parent().expect("pai").join("nao-e-daqui.mp3");
+        assert_eq!(
+            find_by_absolute_path(&db, &env.musica, &fora).expect("consultar"),
+            None
+        );
     }
 
     #[test]

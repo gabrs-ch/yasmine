@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Yasmine
+Comment=Player de música
+Exec=yasmine %F
+Icon=yasmine
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+StartupNotify=true
+MimeType=audio/mpeg;audio/flac;audio/mp4;audio/x-m4a;audio/aac;audio/ogg;audio/opus;audio/x-wav;audio/wav;audio/vnd.wave;audio/aiff;audio/x-aiff;

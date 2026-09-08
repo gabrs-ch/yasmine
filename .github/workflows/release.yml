@@ -37,13 +37,19 @@ jobs:
       - name: Build (release)
         run: cargo build --release -p player-pc
 
-      # Cada pacote já sai pronto pra abrir — binário na raiz do arquivo,
-      # sem precisar procurar dentro de uma pasta.
+      # Cada pacote já sai pronto pra abrir — binário na raiz do arquivo, sem
+      # precisar procurar dentro de uma pasta — e com o que a instalação de
+      # verdade (não só "rodar uma vez") precisa: no Linux, o `.desktop` e o
+      # ícone que `install.sh` registra; no Windows, o script que associa a
+      # extensões de áudio.
       - name: Empacotar (Linux)
         if: runner.os == 'Linux'
         run: |
           mkdir dist
           cp target/release/yasmine dist/
+          cp crates/pc-app/assets/icon-256.png dist/
+          cp packaging/linux/yasmine.desktop dist/
+          cp packaging/linux/install.sh dist/
           cp README.md dist/
           tar -czf ${{ matrix.asset }} -C dist .
 
@@ -53,6 +59,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path dist
           Copy-Item target/release/yasmine.exe dist/
+          Copy-Item packaging/windows/register-file-types.ps1 dist/
+          Copy-Item packaging/windows/register-file-types.cmd dist/
           Copy-Item README.md dist/
           Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset }}
 

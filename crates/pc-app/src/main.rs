@@ -29,10 +29,13 @@ fn load_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result<()> {
-    // Pasta opcional na linha de comando: abre e escaneia direto. Serve pra
-    // "abrir com" do gerenciador de arquivos e pra subir o app já apontado
-    // numa biblioteca.
-    let folder = std::env::args().nth(1).map(std::path::PathBuf::from);
+    // Argumentos da linha de comando: uma pasta (subir já apontado numa
+    // biblioteca) ou um ou mais arquivos (o "abrir com" do gerenciador de
+    // arquivos, inclusive com vários selecionados de uma vez — `app::Opened`
+    // decide qual dos dois casos é esse). Sem filtrar aqui: um caminho que
+    // não existe mais vira `Opened::Nothing` do mesmo jeito que nenhum
+    // argumento, sem precisar de um caso de erro à parte.
+    let args: Vec<std::path::PathBuf> = std::env::args_os().skip(1).map(Into::into).collect();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -58,7 +61,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "yasmine",
         options,
-        Box::new(move |cc| match app::App::new(cc, folder) {
+        Box::new(move |cc| match app::App::new(cc, &args) {
             Ok(app) => Ok(Box::new(app) as Box<dyn eframe::App>),
             Err(err) => Err(err.into()),
         }),

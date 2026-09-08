@@ -16,17 +16,45 @@ instalar à parte:
   executável não é assinado) — clique em "Mais informações" → "Executar
   assim mesmo".
 - **Linux**: baixe o `.tar.gz`, extraia, dê duplo clique em `yasmine` (ou
-  `./yasmine` no terminal). Nas bibliotecas de áudio/gráfico (ALSA, GL) e no
+  `./yasmine` no terminal). Bibliotecas de áudio/gráfico (ALSA, GL) e o
   diálogo de escolher pasta (`xdg-desktop-portal`) — praticamente todo
   desktop Linux moderno (GNOME, KDE, XFCE) já vem com isso.
 
-Não precisa instalar de verdade: é um binário só, dá pra rodar de qualquer
-pasta, e apagar é só apagar o arquivo — nada fica espalhado pelo sistema
-além da pasta de dados do próprio player (índice da biblioteca e cache de
-capa, nos diretórios padrão do sistema).
+Isso já basta pra rodar: é um binário só, dá pra executar de qualquer pasta,
+e apagar é só apagar o arquivo. Nada fica espalhado pelo sistema além da
+pasta de dados do próprio player (índice da biblioteca e cache de capa, nos
+diretórios padrão do sistema).
 
 Quer compilar você mesmo? `cargo run --release -p player-pc` (pede toolchain
 Rust estável — [rustup.rs](https://rustup.rs)).
+
+### Abrir com
+
+Pra abrir arquivo de música direto do gerenciador de arquivos — um ou vários
+selecionados de uma vez — tem um passo a mais, porque isso é integração com
+o sistema, não só rodar o binário:
+
+- **Linux**: dentro da pasta extraída, `./install.sh`. Copia o binário pra
+  `~/.local/bin`, registra o ícone e o `.desktop` (com `MimeType=` pros
+  formatos que o player decodifica) em `~/.local/share`. Sem `sudo`, só
+  na conta do usuário atual. Depois disso "Yasmine" aparece no menu de
+  aplicativos e no "Abrir com" de qualquer mp3/flac/m4a/ogg/opus/wav/aiff.
+- **Windows**: dentro da pasta extraída, duplo clique em
+  `register-file-types.cmd`. Grava em `HKEY_CURRENT_USER` (sem admin) o
+  registro de `Applications\yasmine.exe` pros mesmos formatos, com
+  `MultiSelectModel=Player` — selecionar vários arquivos e abrir de uma vez
+  lança uma instância só, com todos como argumento, em vez de uma por
+  arquivo.
+
+Sem rodar isso, ainda dá pra abrir arquivo com o Yasmine — só que na mão,
+via "Abrir com" → "Escolher outro app" → apontar pro executável. O passo
+acima só faz o sistema lembrar da escolha e listar o player pelo nome
+depois.
+
+Multi-seleção entrega os arquivos na ordem que o gerenciador de arquivos
+passou; o player aponta a biblioteca pra pasta deles (mesmo caminho de
+"apontar uma pasta de música", só que escolhido pelos arquivos, não por
+quem abriu) e toca a partir do primeiro.
 
 ## Princípios
 
