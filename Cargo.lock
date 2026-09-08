@@ -2220,6 +2220,7 @@ dependencies = [
  "player-audio",
  "player-core",
  "rfd",
+ "uuid",
 ]
 
 [[package]]

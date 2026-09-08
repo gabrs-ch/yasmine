@@ -19,8 +19,10 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Align2, Color32, CornerRadius, Rect, Sense, Stroke, pos2, vec2};
 use player_audio::{Engine, Event};
 use player_core::library::{self, Sort, Stats, TrackRow};
+use player_core::playlist::{self, Playlist};
 use player_core::scan::scan_with_progress;
 use player_core::{ArtCache, Db, TrackId};
+use uuid::Uuid;
 
 use crate::art::ArtLoader;
 use crate::paths::Paths;
@@ -31,6 +33,13 @@ use crate::watcher::Watcher;
 /// Chave no `meta` onde a pasta escolhida fica guardada, para a próxima
 /// execução abrir direto na biblioteca.
 const META_ROOT: &str = "library_root";
+
+/// De onde a lista visível vem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Source {
+    Library,
+    Playlist(Uuid),
+}
 
 struct ScanJob {
     progress: Arc<AtomicUsize>,
@@ -45,10 +54,18 @@ pub struct App {
     paths: Paths,
     root: Option<PathBuf>,
 
+    source: Source,
     view: Vec<TrackId>,
+    /// Posição de cada item de `view` na playlist ativa — paralelo a `view`,
+    /// vazio quando a fonte é a biblioteca. É o que permite "remover da
+    /// playlist" e "mover" sem uma segunda ida ao banco por linha.
+    view_positions: Vec<String>,
     query: String,
     sort: Sort,
     stats: Stats,
+    playlists: Vec<Playlist>,
+    /// Playlist em edição de nome: (id, texto do campo, pedir foco).
+    renaming: Option<(Uuid, String, bool)>,
 
     engine: Engine,
     art: ArtLoader,
@@ -94,10 +111,14 @@ impl App {
             db,
             paths,
             root,
+            source: Source::Library,
             view: Vec::new(),
+            view_positions: Vec::new(),
             query: String::new(),
             sort: Sort::ArtistAlbum,
             stats: Stats::default(),
+            playlists: Vec::new(),
+            renaming: None,
             engine: Engine::new(),
             selected: None,
             queue: Queue::default(),
@@ -132,8 +153,116 @@ impl App {
     // -------------------------------------------------------------------------
 
     fn reload(&mut self) {
-        self.view = library::search(&self.db, &self.query, self.sort).unwrap_or_default();
+        match self.source {
+            Source::Library => {
+                self.view = library::search(&self.db, &self.query, self.sort).unwrap_or_default();
+                self.view_positions.clear();
+            }
+            Source::Playlist(id) => {
+                // Uma consulta só: dá tanto a lista de faixas tocáveis quanto
+                // a posição de cada uma, sem duas idas ao banco.
+                let items = playlist::items(&self.db, id).unwrap_or_default();
+                self.view = Vec::with_capacity(items.len());
+                self.view_positions = Vec::with_capacity(items.len());
+                for item in items {
+                    if let Some(track) = item.track {
+                        self.view.push(track);
+                        self.view_positions.push(item.position);
+                    }
+                }
+            }
+        }
         self.stats = library::stats(&self.db).unwrap_or_default();
+        self.playlists = playlist::all(&self.db).unwrap_or_default();
+        self.selected = None;
+    }
+
+    /// Troca a fonte da lista (biblioteca ou uma playlist) e recarrega.
+    fn set_source(&mut self, source: Source) {
+        if self.source == source {
+            return;
+        }
+        self.source = source;
+        self.reload();
+    }
+
+    /// Cria uma playlist e a deixa pronta para o usuário nomear.
+    ///
+    /// `track`, quando presente, já entra na lista nova — é o caso de "Nova
+    /// playlist…" a partir do menu de contexto de uma faixa.
+    fn create_playlist(&mut self, track: Option<TrackId>) {
+        let Ok(id) = playlist::create(&self.db, "Nova playlist") else {
+            return;
+        };
+        if let Some(track) = track {
+            let _ = playlist::append(&mut self.db, id, &[track]);
+        }
+        self.playlists = playlist::all(&self.db).unwrap_or_default();
+        self.renaming = Some((id, "Nova playlist".to_owned(), true));
+        self.set_source(Source::Playlist(id));
+    }
+
+    fn commit_rename(&mut self) {
+        let Some((id, name, _)) = self.renaming.take() else {
+            return;
+        };
+        let name = name.trim();
+        if !name.is_empty() {
+            let _ = playlist::rename(&self.db, id, name);
+        }
+        self.playlists = playlist::all(&self.db).unwrap_or_default();
+    }
+
+    fn delete_playlist(&mut self, id: Uuid) {
+        let _ = playlist::delete(&self.db, id);
+        if self.source == Source::Playlist(id) {
+            self.set_source(Source::Library);
+        } else {
+            self.playlists = playlist::all(&self.db).unwrap_or_default();
+        }
+    }
+
+    /// Acrescenta `track` ao fim de uma playlist. Hasheia sob demanda — é a
+    /// primeira vez que este arquivo precisa de identidade entre devices.
+    fn add_to_playlist(&mut self, playlist_id: Uuid, track: TrackId) {
+        let _ = playlist::append(&mut self.db, playlist_id, &[track]);
+        if self.source == Source::Playlist(playlist_id) {
+            self.reload();
+        } else {
+            self.playlists = playlist::all(&self.db).unwrap_or_default();
+        }
+    }
+
+    /// Remove um item pela posição — só faz sentido com uma playlist ativa.
+    fn remove_from_playlist(&mut self, index: usize) {
+        let Source::Playlist(id) = self.source else {
+            return;
+        };
+        let Some(position) = self.view_positions.get(index).cloned() else {
+            return;
+        };
+        let _ = playlist::remove(&self.db, id, &position);
+        self.reload();
+    }
+
+    /// Move um item uma posição para cima ou para baixo na playlist ativa.
+    ///
+    /// `move_item` reconstrói a lista como `antes ++ [item] ++ depois`, então
+    /// o `to` que passamos já É o índice final do item na lista resultante —
+    /// não precisa compensar a remoção.
+    fn nudge_in_playlist(&mut self, index: usize, delta: isize) {
+        let Source::Playlist(id) = self.source else {
+            return;
+        };
+        let Some(position) = self.view_positions.get(index).cloned() else {
+            return;
+        };
+        let target = index as isize + delta;
+        if target < 0 || target as usize >= self.view.len() {
+            return;
+        }
+        let _ = playlist::move_item(&self.db, id, &position, target as usize);
+        self.reload();
     }
 
     /// Aponta a biblioteca para `folder`, guarda a escolha e escaneia.
@@ -380,23 +509,38 @@ impl App {
             }
 
             ui.add_space(8.0);
-            let search = ui.add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .desired_width(220.0)
-                    .hint_text("buscar"),
-            );
-            if std::mem::take(&mut self.focus_search) {
-                search.request_focus();
-            }
-            if search.changed() {
-                self.reload();
-            }
+            // A busca só filtra a biblioteca — dentro de uma playlist ela
+            // ficaria filtrando contra o índice errado. Desabilitada, não
+            // escondida: o texto continua ali para quando o usuário voltar.
+            let in_library = self.source == Source::Library;
+            ui.add_enabled_ui(in_library, |ui| {
+                let search = ui.add(
+                    egui::TextEdit::singleline(&mut self.query)
+                        .desired_width(220.0)
+                        .hint_text("buscar"),
+                );
+                if std::mem::take(&mut self.focus_search) && in_library {
+                    search.request_focus();
+                }
+                if search.changed() {
+                    self.reload();
+                }
+            });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
-                let texto = match &self.scan {
-                    Some(job) => format!("escaneando… {}", job.progress.load(Ordering::Relaxed)),
-                    None => format!(
+                let texto = match (&self.scan, self.source) {
+                    (Some(job), _) => {
+                        format!("escaneando… {}", job.progress.load(Ordering::Relaxed))
+                    }
+                    (None, Source::Playlist(id)) => self
+                        .playlists
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map_or_else(String::new, |p| {
+                            format!("{}  ·  {} faixas", p.name, p.items)
+                        }),
+                    (None, Source::Library) => format!(
                         "{} faixas · {} álbuns · {} artistas",
                         self.stats.tracks, self.stats.albums, self.stats.artists
                     ),
@@ -410,16 +554,104 @@ impl App {
         });
     }
 
+    /// Barra lateral: biblioteca + playlists. Larga o bastante para nomes
+    /// razoáveis, estreita o bastante para não roubar espaço da lista.
+    fn sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.add_space(6.0);
+
+        if sidebar_row(ui, "BIBLIOTECA", self.source == Source::Library).clicked() {
+            self.set_source(Source::Library);
+        }
+
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.add_space(10.0);
+            ui.label(
+                egui::RichText::new("PLAYLISTS")
+                    .font(theme::small())
+                    .color(theme::FAINT),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(8.0);
+                if ui
+                    .add(egui::Button::new(egui::RichText::new("+").font(theme::mono())).small())
+                    .on_hover_text("Nova playlist")
+                    .clicked()
+                {
+                    self.create_playlist(None);
+                }
+            });
+        });
+        ui.add_space(4.0);
+
+        let playlists = self.playlists.clone();
+        let mut pending_delete = None;
+
+        for pl in &playlists {
+            let is_active = self.source == Source::Playlist(pl.id);
+            let is_renaming = matches!(&self.renaming, Some((id, _, _)) if *id == pl.id);
+
+            if is_renaming {
+                let response = ui
+                    .horizontal(|ui| {
+                        ui.add_space(9.0);
+                        let (_, buf, _) = self
+                            .renaming
+                            .as_mut()
+                            .expect("checado por is_renaming acima");
+                        ui.add(
+                            egui::TextEdit::singleline(buf)
+                                .desired_width(ui.available_width() - 12.0)
+                                .font(theme::body()),
+                        )
+                    })
+                    .inner;
+
+                if let Some((_, _, focus)) = &mut self.renaming
+                    && std::mem::take(focus)
+                {
+                    response.request_focus();
+                }
+                if response.lost_focus() {
+                    self.commit_rename();
+                }
+                continue;
+            }
+
+            let label = format!("{}  ({})", pl.name, pl.items);
+            let row = sidebar_row(ui, &label, is_active);
+            if row.clicked() {
+                self.set_source(Source::Playlist(pl.id));
+            }
+            row.context_menu(|ui| {
+                if ui.button("Renomear").clicked() {
+                    self.renaming = Some((pl.id, pl.name.clone(), true));
+                    ui.close();
+                }
+                if ui.button("Apagar").clicked() {
+                    pending_delete = Some(pl.id);
+                    ui.close();
+                }
+            });
+        }
+
+        if let Some(id) = pending_delete {
+            self.delete_playlist(id);
+        }
+    }
+
     fn list(&mut self, ui: &mut egui::Ui) {
         if self.view.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(80.0);
-                let texto = if self.root.is_none() {
-                    "Escolha uma pasta de música para começar."
-                } else if self.query.is_empty() {
-                    "Nenhuma faixa indexada nessa pasta."
-                } else {
-                    "Nada encontrado."
+                let texto = match self.source {
+                    _ if self.root.is_none() => "Escolha uma pasta de música para começar.",
+                    Source::Playlist(_) => {
+                        "Esta playlist está vazia. Botão direito numa faixa da biblioteca para adicionar."
+                    }
+                    Source::Library if self.query.is_empty() => "Nenhuma faixa indexada nessa pasta.",
+                    Source::Library => "Nada encontrado.",
                 };
                 ui.label(egui::RichText::new(texto).color(theme::DIM));
             });
@@ -461,6 +693,12 @@ impl App {
         );
 
         let mut clicked: Option<(usize, bool)> = None;
+        // Capturados antes do closure para não precisar reler `self` dentro
+        // dele: `playlists` é lido no submenu, `source` e `total` decidem se
+        // "mover"/"remover" fazem sentido para a linha.
+        let playlists = self.playlists.clone();
+        let source = self.source;
+        let total = self.view.len();
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -546,6 +784,47 @@ impl App {
                     if response.double_clicked() {
                         clicked = Some((index, true));
                     }
+
+                    let track = row.id;
+                    response.context_menu(|ui| {
+                        ui.menu_button("Adicionar à playlist", |ui| {
+                            for pl in &playlists {
+                                if ui.button(&pl.name).clicked() {
+                                    self.add_to_playlist(pl.id, track);
+                                    ui.close();
+                                }
+                            }
+                            if !playlists.is_empty() {
+                                ui.separator();
+                            }
+                            if ui.button("Nova playlist…").clicked() {
+                                self.create_playlist(Some(track));
+                                ui.close();
+                            }
+                        });
+
+                        if matches!(source, Source::Playlist(_)) {
+                            ui.separator();
+                            let up =
+                                ui.add_enabled(index > 0, egui::Button::new("Mover para cima"));
+                            if up.clicked() {
+                                self.nudge_in_playlist(index, -1);
+                                ui.close();
+                            }
+                            let down = ui.add_enabled(
+                                index + 1 < total,
+                                egui::Button::new("Mover para baixo"),
+                            );
+                            if down.clicked() {
+                                self.nudge_in_playlist(index, 1);
+                                ui.close();
+                            }
+                            if ui.button("Remover da playlist").clicked() {
+                                self.remove_from_playlist(index);
+                                ui.close();
+                            }
+                        }
+                    });
                 }
             });
 
@@ -810,6 +1089,12 @@ impl eframe::App for App {
                 });
         }
 
+        egui::Panel::left("sidebar")
+            .exact_size(170.0)
+            .resizable(false)
+            .frame(egui::Frame::new().fill(theme::PANEL))
+            .show(ui, |ui| self.sidebar(ui));
+
         egui::CentralPanel::no_frame()
             .frame(egui::Frame::new().fill(theme::BG))
             .show(ui, |ui| self.list(ui));
@@ -882,6 +1167,35 @@ impl Columns {
 }
 
 /// Texto de uma célula, truncado na largura da coluna.
+/// Uma linha da sidebar: rótulo alinhado à esquerda, marca de acento quando
+/// ativa. Mesma linguagem visual da lista de faixas — a régua de 2px que
+/// destaca "o que está tocando" aqui destaca "o que está selecionado".
+fn sidebar_row(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, theme::ROW_HEIGHT), Sense::click());
+    let painter = ui.painter();
+
+    if active || response.hovered() {
+        painter.rect_filled(rect, CornerRadius::ZERO, theme::HOVER);
+    }
+    if active {
+        painter.rect_filled(
+            Rect::from_min_size(rect.left_top(), vec2(2.0, rect.height())),
+            CornerRadius::ZERO,
+            theme::ACCENT,
+        );
+    }
+
+    let color = if active { theme::ACCENT } else { theme::TEXT };
+    let text_rect = Rect::from_min_size(
+        pos2(rect.left() + 10.0, rect.top()),
+        vec2((rect.width() - 16.0).max(0.0), rect.height()),
+    );
+    cell(painter, text_rect, label, theme::body(), color);
+
+    response
+}
+
 fn cell(painter: &egui::Painter, rect: Rect, text: &str, font: egui::FontId, color: Color32) {
     if text.is_empty() {
         return;
