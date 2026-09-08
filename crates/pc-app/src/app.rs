@@ -10,7 +10,7 @@
 //!
 //! Nunca 60 fps.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, channel};
@@ -26,6 +26,7 @@ use crate::art::ArtLoader;
 use crate::paths::Paths;
 use crate::queue::{Queue, Repeat};
 use crate::theme;
+use crate::watcher::Watcher;
 
 /// Chave no `meta` onde a pasta escolhida fica guardada, para a próxima
 /// execução abrir direto na biblioteca.
@@ -38,6 +39,8 @@ struct ScanJob {
 }
 
 pub struct App {
+    /// Guardado para acordar a janela a partir de outra thread.
+    ctx: egui::Context,
     db: Db,
     paths: Paths,
     root: Option<PathBuf>,
@@ -61,6 +64,9 @@ pub struct App {
     now: Option<TrackRow>,
 
     scan: Option<ScanJob>,
+    /// Chegou mudança do disco enquanto um scan já rodava.
+    rescan_pending: bool,
+    watcher: Option<Watcher>,
     status: String,
     focus_search: bool,
 }
@@ -83,6 +89,7 @@ impl App {
             .map(PathBuf::from);
 
         let mut app = Self {
+            ctx: cc.egui_ctx.clone(),
             art: ArtLoader::new(paths.cache.clone()),
             db,
             paths,
@@ -97,6 +104,8 @@ impl App {
             now_id: None,
             now: None,
             scan: None,
+            rescan_pending: false,
+            watcher: None,
             status: String::new(),
             focus_search: false,
         };
@@ -110,6 +119,7 @@ impl App {
             // em "Reescanear" — e músicas novas simplesmente aparecem.
             None => {
                 if let Some(root) = app.root.clone() {
+                    app.watch(&root);
                     app.start_scan(root);
                 }
             }
@@ -136,6 +146,7 @@ impl App {
         // Uma pasta por vez: apontar outra esquece a anterior, senão a
         // contagem de faixas soma bibliotecas que o usuário não vê mais.
         let _ = player_core::keep_only_root(&self.db, &folder);
+        self.watch(&folder);
         self.root = Some(folder.clone());
         self.queue.clear();
         self.now_id = None;
@@ -156,6 +167,22 @@ impl App {
         };
 
         self.set_root(folder);
+    }
+
+    /// Passa a vigiar `folder`, trocando o vigia anterior.
+    fn watch(&mut self, folder: &Path) {
+        if self.watcher.as_ref().is_some_and(|w| w.root() == folder) {
+            return;
+        }
+        let ctx = self.ctx.clone();
+        self.watcher = match Watcher::new(folder, move || ctx.request_repaint()) {
+            Ok(watcher) => Some(watcher),
+            Err(err) => {
+                // Vigiar é conveniência: sem ele resta o botão "Reescanear".
+                self.status = format!("não consegui vigiar a pasta: {err}");
+                None
+            }
+        };
     }
 
     /// Escaneia numa thread própria, com conexão própria.
@@ -200,6 +227,12 @@ impl App {
 
         let elapsed = job.started.elapsed();
         self.scan = None;
+        // Mudou o disco no meio do scan: o resultado pode estar velho.
+        if std::mem::take(&mut self.rescan_pending)
+            && let Some(root) = self.root.clone()
+        {
+            self.start_scan(root);
+        }
         match outcome {
             Ok(report) => {
                 self.status = format!(
@@ -213,6 +246,19 @@ impl App {
                 self.reload();
             }
             Err(err) => self.status = format!("falha no scan: {err}"),
+        }
+    }
+
+    /// Reage a arquivos que apareceram, sumiram ou mudaram na pasta.
+    fn poll_watcher(&mut self) {
+        if !self.watcher.as_ref().is_some_and(Watcher::take_change) {
+            return;
+        }
+        match (&self.scan, self.root.clone()) {
+            // Já tem scan rodando: anota para refazer quando terminar.
+            (Some(_), _) => self.rescan_pending = true,
+            (None, Some(root)) => self.start_scan(root),
+            (None, None) => {}
         }
     }
 
@@ -735,6 +781,7 @@ impl eframe::App for App {
         self.art.begin_frame(ctx);
         self.poll_audio();
         self.poll_scan();
+        self.poll_watcher();
         self.shortcuts(ctx);
 
         egui::Panel::top("comando")

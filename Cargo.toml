@@ -34,6 +34,7 @@ eframe = { version = "0.36", default-features = false, features = [
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 jwalk = "0.8"
 lofty = "0.22"
+notify = "8"
 rayon = "1"
 rfd = "0.17"
 rtrb = "0.3"

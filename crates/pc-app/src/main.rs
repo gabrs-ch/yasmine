@@ -8,6 +8,7 @@ mod art;
 mod paths;
 mod queue;
 mod theme;
+mod watcher;
 
 use eframe::egui;
 
