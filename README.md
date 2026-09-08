@@ -4,6 +4,30 @@ Player de música para PC (Rust) e Android, com sync direto por LAN — sem
 conta, sem nuvem, sem servidor. O usuário aponta uma pasta; para sincronizar,
 aponta o outro device.
 
+## Instalação
+
+Baixe o executável pronto — nada pra compilar, nenhuma dependência pra
+instalar à parte:
+
+**[github.com/gabrs-ch/yasmine/releases/latest](https://github.com/gabrs-ch/yasmine/releases/latest)**
+
+- **Windows**: baixe o `.zip`, extraia, dê duplo clique em `yasmine.exe`. O
+  Windows pode avisar "O Windows protegeu seu PC" na primeira vez (o
+  executável não é assinado) — clique em "Mais informações" → "Executar
+  assim mesmo".
+- **Linux**: baixe o `.tar.gz`, extraia, dê duplo clique em `yasmine` (ou
+  `./yasmine` no terminal). Nas bibliotecas de áudio/gráfico (ALSA, GL) e no
+  diálogo de escolher pasta (`xdg-desktop-portal`) — praticamente todo
+  desktop Linux moderno (GNOME, KDE, XFCE) já vem com isso.
+
+Não precisa instalar de verdade: é um binário só, dá pra rodar de qualquer
+pasta, e apagar é só apagar o arquivo — nada fica espalhado pelo sistema
+além da pasta de dados do próprio player (índice da biblioteca e cache de
+capa, nos diretórios padrão do sistema).
+
+Quer compilar você mesmo? `cargo run --release -p player-pc` (pede toolchain
+Rust estável — [rustup.rs](https://rustup.rs)).
+
 ## Princípios
 
 1. **Otimização é o critério de desempate** em toda decisão técnica.
