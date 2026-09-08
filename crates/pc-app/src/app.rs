@@ -34,6 +34,15 @@ use crate::watcher::Watcher;
 /// execução abrir direto na biblioteca.
 const META_ROOT: &str = "library_root";
 
+/// Tamanho da janela no modo compacto. Largo o bastante pra capa, título,
+/// artista e os três botões de transporte não se atropelarem; nada além.
+const MINI_SIZE: egui::Vec2 = egui::Vec2::new(340.0, 112.0);
+
+/// Tamanho mínimo da janela normal — abaixo disso a lista de faixas não
+/// cabe de um jeito legível. Compartilhado com `main.rs`, que usa o mesmo
+/// valor para configurar a janela na primeira abertura.
+pub const NORMAL_MIN_SIZE: egui::Vec2 = egui::Vec2::new(620.0, 380.0);
+
 /// De onde a lista visível vem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Source {
@@ -86,6 +95,13 @@ pub struct App {
     watcher: Option<Watcher>,
     status: String,
     focus_search: bool,
+
+    /// Modo compacto: só capa, transporte e progresso, numa janela pequena
+    /// o bastante para ficar num canto da tela sem competir por espaço.
+    mini: bool,
+    /// Tamanho da janela antes de entrar no modo compacto, para restaurar
+    /// exatamente o que o usuário tinha — não um tamanho padrão qualquer.
+    normal_size: egui::Vec2,
 }
 
 impl App {
@@ -129,6 +145,8 @@ impl App {
             watcher: None,
             status: String::new(),
             focus_search: false,
+            mini: false,
+            normal_size: vec2(1000.0, 660.0),
         };
         app.reload();
         match folder {
@@ -843,30 +861,8 @@ impl App {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
 
-            // Capa. É o único lugar da interface onde ela aparece.
-            let (cover, _) = ui.allocate_exact_size(vec2(56.0, 56.0), Sense::hover());
-            let painter = ui.painter();
-            painter.rect_filled(cover, CornerRadius::ZERO, theme::PANEL);
-            let texture = self
-                .now
-                .as_ref()
-                .and_then(|row| row.art_hash)
-                .and_then(|hash| self.art.texture(&hash));
-            if let Some(texture) = texture {
-                ui.painter().image(
-                    texture,
-                    cover,
-                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
-            } else {
-                ui.painter().rect_stroke(
-                    cover,
-                    CornerRadius::ZERO,
-                    Stroke::new(1.0, theme::RULE),
-                    egui::StrokeKind::Inside,
-                );
-            }
+            // Capa. Só aparece aqui e no modo compacto.
+            self.draw_cover(ui, 56.0);
 
             ui.add_space(10.0);
             ui.vertical(|ui| {
@@ -933,6 +929,9 @@ impl App {
                     self.queue.set_shuffle(on);
                     self.queue_next();
                 }
+                if toggle(ui, "MINI", self.mini).clicked() {
+                    self.toggle_mini(ui.ctx());
+                }
 
                 ui.add_space(10.0);
                 if transport(ui, Glyph::Next).clicked() {
@@ -957,8 +956,13 @@ impl App {
         });
 
         ui.add_space(6.0);
+        self.progress_bar(ui, state);
+    }
 
-        // Barra de progresso: 3px, sem cantos, o segundo e último uso do acento.
+    /// Barra de progresso: 3px, sem cantos, o segundo e último uso do acento
+    /// além da marca da faixa tocando. Compartilhada entre o player normal
+    /// e o modo compacto — a única diferença entre os dois é a largura.
+    fn progress_bar(&mut self, ui: &mut egui::Ui, state: player_audio::PlaybackState) {
         let width = ui.available_width();
         let (rect, response) = ui.allocate_exact_size(vec2(width, 3.0), Sense::click_and_drag());
         let painter = ui.painter();
@@ -992,6 +996,135 @@ impl App {
         }
     }
 
+    /// Desenha a capa da faixa atual num quadrado `size`x`size`. Único
+    /// widget repetido entre o player normal e o modo compacto.
+    fn draw_cover(&mut self, ui: &mut egui::Ui, size: f32) {
+        let (cover, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
+        let painter = ui.painter();
+        painter.rect_filled(cover, CornerRadius::ZERO, theme::PANEL);
+        let texture = self
+            .now
+            .as_ref()
+            .and_then(|row| row.art_hash)
+            .and_then(|hash| self.art.texture(&hash));
+        if let Some(texture) = texture {
+            painter.image(
+                texture,
+                cover,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        } else {
+            painter.rect_stroke(
+                cover,
+                CornerRadius::ZERO,
+                Stroke::new(1.0, theme::RULE),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+
+    /// Janela compacta: capa, título/artista, transporte e progresso. Cabe
+    /// num canto da tela sem competir por espaço com outras janelas — o
+    /// "sempre visível, sempre pequeno" que falta em muito player.
+    fn mini_bar(&mut self, ui: &mut egui::Ui) {
+        let state = self.engine.state();
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            self.draw_cover(ui, 44.0);
+
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.set_max_width(96.0);
+                ui.add_space(3.0);
+                match &self.now {
+                    Some(row) => {
+                        ui.label(egui::RichText::new(shorten(&row.title, 14)).color(theme::TEXT));
+                        ui.label(
+                            egui::RichText::new(shorten(row.artist.as_deref().unwrap_or("—"), 14))
+                                .font(theme::small())
+                                .color(theme::DIM),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            egui::RichText::new("nada tocando")
+                                .font(theme::small())
+                                .color(theme::FAINT),
+                        );
+                    }
+                }
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(6.0);
+                if transport(ui, Glyph::Next).clicked() {
+                    self.next_track();
+                }
+                if transport(
+                    ui,
+                    if state.playing {
+                        Glyph::Pause
+                    } else {
+                        Glyph::Play
+                    },
+                )
+                .clicked()
+                {
+                    self.toggle_play();
+                }
+                if transport(ui, Glyph::Prev).clicked() {
+                    self.prev_track();
+                }
+                // Volta pra janela normal. Precisa estar sempre visível: é o
+                // único jeito de sair sem saber do atalho de cor.
+                if toggle(ui, "◲", true)
+                    .on_hover_text("Sair do modo compacto (Ctrl+M)")
+                    .clicked()
+                {
+                    self.toggle_mini(ui.ctx());
+                }
+            });
+        });
+
+        ui.add_space(6.0);
+        self.progress_bar(ui, state);
+    }
+
+    /// Alterna entre a janela normal e o modo compacto, redimensionando a
+    /// janela de verdade — não é só uma troca de layout.
+    ///
+    /// O tamanho anterior é lido do próprio `InputState` na hora de entrar no
+    /// modo compacto, não guardado a cada frame: assim, se o usuário
+    /// redimensionar a janela normal antes de encolher, é esse tamanho (e
+    /// não um valor desatualizado) que volta ao sair do modo compacto.
+    fn toggle_mini(&mut self, ctx: &egui::Context) {
+        self.mini = !self.mini;
+        let target = if self.mini {
+            if let Some(rect) = ctx.input(|i| i.viewport().inner_rect) {
+                self.normal_size = rect.size();
+            }
+            MINI_SIZE
+        } else {
+            self.normal_size
+        };
+
+        // O tamanho mínimo configurado na abertura (620x380, para a lista
+        // de faixas não virar sopa de letrinhas) impediria a janela de
+        // encolher até o tamanho compacto. Relaxa antes de pedir o novo
+        // tamanho, e trava nele — a janela compacta não é para ser
+        // redimensionada à mão, ela já nasce do jeito que precisa ser.
+        let min = if self.mini {
+            MINI_SIZE
+        } else {
+            NORMAL_MIN_SIZE
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
         // Atalho não pode roubar tecla de quem está digitando na busca.
         if ctx.egui_wants_keyboard_input() {
@@ -1003,7 +1136,7 @@ impl App {
             return;
         }
 
-        let (space, enter, down, up, find, shuffle, repeat, next, prev) = ctx.input(|i| {
+        let (space, enter, down, up, find, shuffle, repeat, next, prev, mini) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
                 i.key_pressed(egui::Key::Enter),
@@ -1014,6 +1147,7 @@ impl App {
                 i.key_pressed(egui::Key::R),
                 i.key_pressed(egui::Key::ArrowRight),
                 i.key_pressed(egui::Key::ArrowLeft),
+                i.modifiers.command && i.key_pressed(egui::Key::M),
             )
         });
 
@@ -1039,6 +1173,9 @@ impl App {
         if find {
             self.focus_search = true;
         }
+        if mini {
+            self.toggle_mini(ctx);
+        }
         if down || up {
             let last = self.view.len().saturating_sub(1);
             self.selected = Some(match self.selected {
@@ -1063,41 +1200,49 @@ impl eframe::App for App {
         self.poll_watcher();
         self.shortcuts(ctx);
 
-        egui::Panel::top("comando")
-            .exact_size(34.0)
-            .frame(egui::Frame::new().fill(theme::PANEL))
-            .show(ui, |ui| self.top_bar(ui));
+        if self.mini {
+            // Modo compacto: a janela inteira é a barra do player, sem
+            // topo, sidebar ou lista — é para isso que ela existe.
+            egui::CentralPanel::no_frame()
+                .frame(egui::Frame::new().fill(theme::PANEL))
+                .show(ui, |ui| self.mini_bar(ui));
+        } else {
+            egui::Panel::top("comando")
+                .exact_size(34.0)
+                .frame(egui::Frame::new().fill(theme::PANEL))
+                .show(ui, |ui| self.top_bar(ui));
 
-        egui::Panel::bottom("player")
-            .exact_size(84.0)
-            .frame(egui::Frame::new().fill(theme::PANEL))
-            .show(ui, |ui| self.player_bar(ui));
+            egui::Panel::bottom("player")
+                .exact_size(84.0)
+                .frame(egui::Frame::new().fill(theme::PANEL))
+                .show(ui, |ui| self.player_bar(ui));
 
-        if !self.status.is_empty() {
-            egui::Panel::bottom("status")
-                .exact_size(20.0)
-                .frame(egui::Frame::new().fill(theme::BG))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(&self.status)
-                                .font(theme::small())
-                                .color(theme::FAINT),
-                        );
+            if !self.status.is_empty() {
+                egui::Panel::bottom("status")
+                    .exact_size(20.0)
+                    .frame(egui::Frame::new().fill(theme::BG))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(8.0);
+                            ui.label(
+                                egui::RichText::new(&self.status)
+                                    .font(theme::small())
+                                    .color(theme::FAINT),
+                            );
+                        });
                     });
-                });
+            }
+
+            egui::Panel::left("sidebar")
+                .exact_size(170.0)
+                .resizable(false)
+                .frame(egui::Frame::new().fill(theme::PANEL))
+                .show(ui, |ui| self.sidebar(ui));
+
+            egui::CentralPanel::no_frame()
+                .frame(egui::Frame::new().fill(theme::BG))
+                .show(ui, |ui| self.list(ui));
         }
-
-        egui::Panel::left("sidebar")
-            .exact_size(170.0)
-            .resizable(false)
-            .frame(egui::Frame::new().fill(theme::PANEL))
-            .show(ui, |ui| self.sidebar(ui));
-
-        egui::CentralPanel::no_frame()
-            .frame(egui::Frame::new().fill(theme::BG))
-            .show(ui, |ui| self.list(ui));
 
         // A política de repaint. Nada de 60 fps.
         if self.scan.is_some() {

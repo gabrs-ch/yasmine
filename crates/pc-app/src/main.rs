@@ -21,7 +21,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1000.0, 660.0])
-            .with_min_inner_size([620.0, 380.0])
+            .with_min_inner_size(app::NORMAL_MIN_SIZE)
             .with_title("Player"),
         // glow, não wgpu: o contexto sobe mais rápido e o binário carrega
         // menos dependência. Aparece direto no tempo até a janela existir.
