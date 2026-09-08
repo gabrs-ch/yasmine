@@ -930,8 +930,8 @@ impl App {
                     self.link_playlist_folder(pl.id);
                     ui.close();
                 }
-                for link in player_core::playlist_folder::links_for(&self.db, pl.id)
-                    .unwrap_or_default()
+                for link in
+                    player_core::playlist_folder::links_for(&self.db, pl.id).unwrap_or_default()
                 {
                     let label = if link.rel_prefix.is_empty() {
                         "Desvincular pasta inteira".to_owned()
@@ -1109,13 +1109,7 @@ impl App {
                         theme::mono(),
                         theme::FAINT,
                     );
-                    cell_strong(
-                        painter,
-                        cols.title(rect),
-                        &row.title,
-                        13.0,
-                        title_color,
-                    );
+                    cell_strong(painter, cols.title(rect), &row.title, 13.0, title_color);
                     cell(
                         painter,
                         cols.artist(rect),
@@ -1371,10 +1365,20 @@ impl App {
             // Gradiente, não cor chapada — mesmo matiz nas duas pontas, só
             // luminosidade diferente, o único lugar da interface onde o
             // acento ganha profundidade.
-            gradient_fill(painter, filled, radius, theme::ACCENT_DIM, theme::ACCENT_BRIGHT);
+            gradient_fill(
+                painter,
+                filled,
+                radius,
+                theme::ACCENT_DIM,
+                theme::ACCENT_BRIGHT,
+            );
         }
         if response.hovered() || response.dragged() {
-            painter.circle_filled(pos2(knob_x, track.center().y), knob_radius, theme::ACCENT_BRIGHT);
+            painter.circle_filled(
+                pos2(knob_x, track.center().y),
+                knob_radius,
+                theme::ACCENT_BRIGHT,
+            );
         }
 
         if let (true, Some(total), Some(pointer)) = (
@@ -1813,7 +1817,11 @@ fn glow(painter: &egui::Painter, rect: Rect, color: Color32) {
 fn lerp_color(from: Color32, to: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t) as u8;
-    Color32::from_rgb(mix(from.r(), to.r()), mix(from.g(), to.g()), mix(from.b(), to.b()))
+    Color32::from_rgb(
+        mix(from.r(), to.r()),
+        mix(from.g(), to.g()),
+        mix(from.b(), to.b()),
+    )
 }
 
 /// Preenchimento em gradiente horizontal dentro de uma pílula. `Painter` não
@@ -1832,7 +1840,10 @@ fn gradient_fill(painter: &egui::Painter, rect: Rect, radius: f32, from: Color32
     for i in 0..STEPS {
         let t = i as f32 / (STEPS - 1) as f32;
         let x0 = inner.left() + step_w * i as f32;
-        let strip = Rect::from_min_max(pos2(x0, inner.top()), pos2(x0 + step_w + 0.5, inner.bottom()));
+        let strip = Rect::from_min_max(
+            pos2(x0, inner.top()),
+            pos2(x0 + step_w + 0.5, inner.bottom()),
+        );
         painter.rect_filled(strip, 0.0, lerp_color(from, to, t));
     }
 }
@@ -1889,8 +1900,7 @@ fn volume_slider(ui: &mut egui::Ui, value: f32) -> Option<f32> {
     const HIT_HEIGHT: f32 = 20.0;
     let value = value.clamp(0.0, 1.0);
     let knob_radius = 5.0;
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(56.0, HIT_HEIGHT), Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(vec2(56.0, HIT_HEIGHT), Sense::click_and_drag());
     let painter = ui.painter();
 
     // Trilho: pílula (raio = metade da altura), não retângulo — é a curva
@@ -2090,8 +2100,7 @@ fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
         .painter()
         .layout_no_wrap(label.to_owned(), theme::body(), Color32::WHITE);
     let padding = vec2(14.0, 8.0);
-    let (rect, response) =
-        ui.allocate_exact_size(galley.size() + padding * 2.0, Sense::click());
+    let (rect, response) = ui.allocate_exact_size(galley.size() + padding * 2.0, Sense::click());
     let painter = ui.painter();
     let fill = if response.hovered() {
         theme::ACCENT_BRIGHT
@@ -2131,7 +2140,13 @@ fn transport(ui: &mut egui::Ui, glyph: Glyph) -> egui::Response {
         Glyph::Prev => theme::icon_glyph::SKIP_BACK,
         Glyph::Next => theme::icon_glyph::SKIP_FORWARD,
     };
-    painter.text(rect.center(), Align2::CENTER_CENTER, ch, theme::icon(16.0), color);
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        ch,
+        theme::icon(16.0),
+        color,
+    );
 
     response
 }

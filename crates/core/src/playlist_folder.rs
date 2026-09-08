@@ -254,8 +254,15 @@ mod tests {
         let (db, env) = biblioteca("fora");
         let id = playlist::create(&db, "Treino").expect("criar playlist");
 
-        let fora = env.musica.parent().expect("pai").join("outra-pasta-qualquer");
-        assert_eq!(link(&db, id, &fora).expect("resolver"), Err(ForaDaBiblioteca));
+        let fora = env
+            .musica
+            .parent()
+            .expect("pai")
+            .join("outra-pasta-qualquer");
+        assert_eq!(
+            link(&db, id, &fora).expect("resolver"),
+            Err(ForaDaBiblioteca)
+        );
         assert!(links_for(&db, id).expect("vínculos").is_empty());
     }
 
