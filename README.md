@@ -1,10 +1,8 @@
-# Player
+# Yasmine
 
 Player de música para PC (Rust) e Android, com sync direto por LAN — sem
 conta, sem nuvem, sem servidor. O usuário aponta uma pasta; para sincronizar,
 aponta o outro device.
-
-*(nome e identidade visual — roxo/azul/preto — a definir)*
 
 ## Princípios
 
@@ -24,6 +22,9 @@ aponta o outro device.
 | `crates/pc-app` | App desktop (`egui`/`eframe`). |
 | `crates/android-ffi` | Bindings Kotlin via uniffi. |
 | `tools/libgen` | Gerador de biblioteca sintética para medição. |
+
+O binário final chama-se `yasmine`; os crates internos mantêm o prefixo
+`player-*` — são identificadores de implementação, não aparecem pro usuário.
 
 ## Decisões fechadas
 
@@ -62,11 +63,30 @@ nenhum.
 Bluetooth e Android Auto saem prontos e testados. O Rust é o **único** escritor
 do arquivo SQLite; o Kotlin só consulta via FFI.
 
+**Índice fracionário pra posição de item de playlist.** Ver
+[`fracidx.rs`](crates/core/src/fracidx.rs). A posição é uma string, não um
+número: mover um item escreve uma linha em vez de renumerar a playlist
+inteira, e dois devices reordenando ao mesmo tempo não colidem quando o sync
+chegar. A chave tem parte inteira (a primeira letra codifica o tamanho), o que
+mantém 50 000 acréscimos em sequência em 4 bytes por chave — sem isso, seria
+bissecção pura e a chave cresceria a cada inserção no mesmo ponto.
+
+**Item de playlist aponta pelo hash da faixa, não pelo id.** `track.id` é
+autoincrement local: o mesmo arquivo tem id diferente em cada device. Um item
+sem faixa local correspondente vira buraco na lista, não desaparece — é a
+faixa que ainda não chegou por sync.
+
+**Sem ícone de bandeja no Linux.** `tray-icon` (a opção óbvia em Rust) puxa
+GTK3 no Linux via `libxdo`/`gtk`, contra a decisão de manter o binário
+enxuto. Existe `ksni` (implementação pura em D-Bus, sem GTK) como alternativa
+mais tarde; por ora, o modo compacto (`Ctrl+M`) cobre o caso de uso de "ficar
+tocando ocupando pouco espaço" sem a dependência.
+
 ## Fases
 
 - [x] **0 — Fundamentos.** Workspace, schema, clippy/fmt no CI, gerador de biblioteca.
 - [x] **1 — Player PC.** Pasta → scan → índice → tocar. Lista, play/pause/next/prev, busca, seek.
-- [ ] **2 — Polimento PC.** Fila, playlists, shuffle/repeat, atalhos, tray, `notify`, profiling.
+- [x] **2 — Polimento PC.** Fila, playlists, shuffle/repeat, atalhos, modo compacto, `notify`, profiling.
 - [ ] **3 — Android standalone.** Compose + `core` via uniffi.
 - [ ] **4 — Sync na LAN.** QR → mDNS → Noise → diff por hash.
 - [ ] **5 — Refinamento.** Profiling real, biblioteca grande, onboarding.
@@ -95,6 +115,34 @@ scan de 5 000 álbuns. Rescans não pagam nada disso.
 Do RSS de 143 MB do app, 67 MB são o `libLLVM` do llvmpipe — o rasterizador
 OpenGL por software desta VM, que não existe numa máquina com driver de GPU.
 
+### Fase 2 — fila, playlists, modo compacto, vigia de arquivos
+
+Mesma biblioteca de 50 000 faixas, mais uma playlist com todas elas — o caso
+que estressa índice fracionário e hash sob demanda de uma vez:
+
+| | |
+|---|---|
+| Criar playlist com 50 000 faixas (hash de tudo, 1ª vez) | 410 ms |
+| Mesma operação, hash já calculado | 147 ms |
+| Ler a playlist de volta (50 000 itens) | 32,8 ms |
+| Listar playlists existentes | 2,6 ms |
+| RSS do app com biblioteca + playlist de 50 000 carregadas | 157 MB |
+| Rescan ao reabrir (conteúdo intacto) | 0,4 s |
+
+O hash é sobre arquivos sintéticos de ~16 KB; num álbum de verdade (3–10 MB
+por faixa) o custo desloca de CPU pra I/O de disco — BLAKE3 satura a leitura
+bem antes de virar o gargalo.
+
+**Descoberto testando a UI de verdade, não só a biblioteca `core`:** o modo
+compacto desenhava certinho para 340×112, mas a janela do SO ficava presa em
+620×380 — o `min_inner_size` configurado na abertura não tinha sido relaxado
+antes do pedido de encolher. E `xdotool getwindowgeometry`, usado nos scripts
+de teste desta sessão, reporta a posição do frame decorado pelo gerenciador
+de janelas, não da área cliente — um offset de ~24px que fazia clique em
+alvo pequeno (o botão "+" de nova playlist) errar sistematicamente, enquanto
+alvos grandes (linha da lista) toleravam o erro por sorte. `xwininfo -id`
+resolve a reparentagem corretamente e virou o método padrão de ali em diante.
+
 ## Interface
 
 Direção visual: software de áudio profissional, não app de streaming. Preto
@@ -108,7 +156,10 @@ genérica; um acento contido faz o oposto.
 
 A lista não mostra capa, de propósito: 25 miniaturas subindo e descendo a cada
 rolagem custariam textura à toa, e a densidade é o ponto. A capa aparece na
-barra do player.
+barra do player e no modo compacto.
+
+A sidebar de playlists segue a mesma linguagem: linha plana, marca de acento
+de 2px em quem está ativo — biblioteca ou uma playlist, nunca as duas.
 
 ## Atalhos
 
@@ -116,9 +167,14 @@ barra do player.
 |---|---|
 | `Espaço` | tocar / pausar |
 | `↑` `↓` | mover a seleção |
+| `←` `→` | faixa anterior / próxima |
 | `Enter` | tocar a seleção |
 | `Ctrl+F` | ir para a busca |
+| `S` | shuffle |
+| `R` | repetir (desligado → tudo → uma → desligado) |
+| `Ctrl+M` | modo compacto |
 | duplo clique | tocar a faixa |
+| botão direito numa faixa | adicionar a playlist, mover, remover |
 
 ## Desenvolvimento
 
@@ -143,6 +199,12 @@ segunda passada é o que mostra se o caminho incremental está funcionando):
 
 ```bash
 cargo run --release -p player-core --example scan -- ./testdata/lib50k /tmp/lib.db
+```
+
+Medir uma playlist grande (hash de tudo de uma vez, e leitura de volta):
+
+```bash
+cargo run --release -p player-core --example playlist_bench -- ./testdata/lib50k
 ```
 
 Rodar o player apontado numa pasta:

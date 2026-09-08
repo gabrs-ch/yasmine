@@ -16,7 +16,7 @@ pub struct Paths {
 impl Paths {
     /// Resolve os diretórios do sistema e garante que existam.
     pub fn resolve() -> std::io::Result<Self> {
-        let dirs = ProjectDirs::from("", "", "player").ok_or_else(|| {
+        let dirs = ProjectDirs::from("", "", "Yasmine").ok_or_else(|| {
             std::io::Error::other("não foi possível descobrir os diretórios do usuário")
         })?;
 

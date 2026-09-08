@@ -22,7 +22,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1000.0, 660.0])
             .with_min_inner_size(app::NORMAL_MIN_SIZE)
-            .with_title("Player"),
+            .with_title("Yasmine"),
         // glow, não wgpu: o contexto sobe mais rápido e o binário carrega
         // menos dependência. Aparece direto no tempo até a janela existir.
         renderer: eframe::Renderer::Glow,
@@ -30,7 +30,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "player",
+        "yasmine",
         options,
         Box::new(move |cc| match app::App::new(cc, folder) {
             Ok(app) => Ok(Box::new(app) as Box<dyn eframe::App>),
