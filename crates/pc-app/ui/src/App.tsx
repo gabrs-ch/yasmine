@@ -8,12 +8,14 @@ import { ScanToast } from "./components/ScanToast";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { MiniBar } from "./components/MiniBar";
 import { ResizeHandles } from "./components/ResizeHandles";
+import { SyncPanel } from "./components/SyncPanel";
 import { useStore } from "./store";
 
 export function App() {
   const ready = useStore((s) => s.ready);
   const root = useStore((s) => s.root);
   const mini = useStore((s) => s.mini);
+  const syncOpen = useStore((s) => s.syncOpen);
   const init = useStore((s) => s.init);
 
   useEffect(() => {
@@ -77,6 +79,7 @@ export function App() {
       </div>
       <PlayerBar />
       <ScanToast />
+      {syncOpen && <SyncPanel />}
       <ContextMenuHost />
       <ResizeHandles />
     </div>

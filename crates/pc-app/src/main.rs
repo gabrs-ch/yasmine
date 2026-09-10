@@ -18,6 +18,7 @@ mod playback;
 mod queue;
 mod scan;
 mod state;
+mod sync_host;
 mod watcher;
 
 use std::path::PathBuf;
@@ -39,6 +40,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(app_state))
+        .manage(sync_host::SyncHost::default())
         .register_uri_scheme_protocol("art", art_protocol::handler(cache_dir))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -103,6 +105,9 @@ fn main() {
             commands::playlist_unlink_folder,
             commands::artist_set_image,
             commands::artist_clear_image,
+            commands::sync_start,
+            commands::sync_stop,
+            commands::sync_info,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Yasmine");

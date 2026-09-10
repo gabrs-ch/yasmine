@@ -17,6 +17,8 @@ export {
   PictureInPicture2,
   Volume2,
   VolumeX,
+  QrCode,
+  Smartphone,
 } from "lucide-react";
 
 export function PrevIcon() {

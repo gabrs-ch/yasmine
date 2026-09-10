@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 player-core.workspace = true
 player-audio.workspace = true
+yasmine-sync.workspace = true
 
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
@@ -23,7 +24,11 @@ serde = { version = "1", features = ["derive"] }
 directories.workspace = true
 image.workspace = true
 notify.workspace = true
+rusqlite.workspace = true
 uuid.workspace = true
+# QR do pareamento, renderizado como SVG e mandado pro front (sem o
+# renderizador `image`, que puxaria outra cópia do crate `image`).
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [lints]
 workspace = true

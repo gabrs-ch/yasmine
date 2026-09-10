@@ -6,6 +6,7 @@ import {
   onScanDone,
   onScanError,
   onScanProgress,
+  onSyncEvent,
   type Artist,
   type OpenResult,
   type Playback,
@@ -16,6 +17,17 @@ import {
 } from "./lib/api";
 
 type SideTab = "playlists" | "artists";
+
+/** Fase do pareamento, pro texto de status do painel de sync. */
+type SyncPhase = "starting" | "waiting" | "connected" | "sending" | "done" | "error";
+
+interface SyncState {
+  qrSvg: string | null;
+  pairUrl: string | null;
+  phase: SyncPhase;
+  /** Nome do celular, % do envio, ou a mensagem de erro. */
+  detail: string | null;
+}
 
 interface AppStore {
   ready: boolean;
@@ -42,6 +54,11 @@ interface AppStore {
   mini: boolean;
   normalSize: [number, number] | null;
   toggleMini: () => Promise<void>;
+
+  syncOpen: boolean;
+  sync: SyncState | null;
+  openSync: () => Promise<void>;
+  closeSync: () => Promise<void>;
 
   init: () => Promise<void>;
   refreshLibrary: () => Promise<void>;
@@ -116,6 +133,29 @@ export const useStore = create<AppStore>((set, get) => ({
   playback: null,
   mini: false,
   normalSize: null,
+  syncOpen: false,
+  sync: null,
+
+  openSync: async () => {
+    set({ syncOpen: true, sync: { qrSvg: null, pairUrl: null, phase: "starting", detail: null } });
+    try {
+      const info = await api.syncStart();
+      set({
+        sync: { qrSvg: info.qrSvg, pairUrl: info.pairUrl, phase: "waiting", detail: null },
+      });
+    } catch (e) {
+      set({ syncOpen: false, sync: null });
+      flash(String(e), set);
+    }
+  },
+  closeSync: async () => {
+    set({ syncOpen: false, sync: null });
+    try {
+      await api.syncStop();
+    } catch {
+      /* já parou */
+    }
+  },
 
   toggleMini: async () => {
     try {
@@ -149,6 +189,29 @@ export const useStore = create<AppStore>((set, get) => ({
       window.setTimeout(() => set({ toast: null }), 6000);
     });
     onScanError((msg) => set({ scan: null, toast: `scan failed: ${msg}` }));
+    onSyncEvent((e) => {
+      const cur = get().sync;
+      if (!cur) return;
+      switch (e.kind) {
+        case "listening":
+          set({ sync: { ...cur, phase: "waiting", detail: null } });
+          break;
+        case "peerConnected":
+          set({ sync: { ...cur, phase: "connected", detail: e.name } });
+          break;
+        case "sending": {
+          const pct = e.total > 0 ? Math.round((e.done / e.total) * 100) : 0;
+          set({ sync: { ...cur, phase: "sending", detail: `${pct}%` } });
+          break;
+        }
+        case "peerFinished":
+          set({ sync: { ...cur, phase: "done", detail: null } });
+          break;
+        case "error":
+          set({ sync: { ...cur, phase: "error", detail: e.msg } });
+          break;
+      }
+    });
 
     const [root, playback] = await Promise.all([api.currentRoot(), api.playbackSnapshot()]);
     set({ root, playback });

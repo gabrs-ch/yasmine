@@ -66,6 +66,20 @@ export interface ScanDone {
 
 export type RepeatMode = "off" | "all" | "one";
 
+export interface SyncInfo {
+  running: boolean;
+  pairUrl: string | null;
+  /** SVG completo do QR — vai num dangerouslySetInnerHTML. */
+  qrSvg: string | null;
+}
+
+export type SyncEvent =
+  | { kind: "listening" }
+  | { kind: "peerConnected"; name: string }
+  | { kind: "sending"; peer: string; done: number; total: number }
+  | { kind: "peerFinished" }
+  | { kind: "error"; msg: string };
+
 export interface Playback {
   playing: boolean;
   positionMs: number;
@@ -120,6 +134,10 @@ export const api = {
     invoke<void>("playlist_unlink_folder", { id, rootId, relPrefix }),
   artistSetImage: (id: number) => invoke<void>("artist_set_image", { id }),
   artistClearImage: (id: number) => invoke<void>("artist_clear_image", { id }),
+
+  syncStart: () => invoke<SyncInfo>("sync_start"),
+  syncStop: () => invoke<void>("sync_stop"),
+  syncInfo: () => invoke<SyncInfo>("sync_info"),
 };
 
 export interface LinkInfo {
@@ -136,6 +154,8 @@ export const onScanError = (cb: (msg: string) => void): Promise<UnlistenFn> =>
   listen<string>("scan://error", (e) => cb(e.payload));
 export const onPlaybackState = (cb: (p: Playback) => void): Promise<UnlistenFn> =>
   listen<Playback>("playback://state", (e) => cb(e.payload));
+export const onSyncEvent = (cb: (e: SyncEvent) => void): Promise<UnlistenFn> =>
+  listen<SyncEvent>("sync://event", (e) => cb(e.payload));
 
 /** URL da miniatura pro `<img>`. O esquema custom muda de forma por plataforma. */
 export function artUrl(hash: string, size: 96 | 512): string {

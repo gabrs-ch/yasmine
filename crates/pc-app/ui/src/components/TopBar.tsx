@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { appWindow } from "../lib/window";
 import { useStore } from "../store";
-import { Folder, RefreshCw, Search, Minus, Square, X } from "./icons";
+import { Folder, RefreshCw, Search, Minus, Square, X, Smartphone } from "./icons";
 
 function shortPath(p: string): string {
   const home = "/home/";
@@ -19,6 +19,7 @@ export function TopBar() {
   const setQuery = useStore((s) => s.setQuery);
   const pickFolder = useStore((s) => s.pickFolder);
   const rescan = useStore((s) => s.rescan);
+  const openSync = useStore((s) => s.openSync);
 
   // debounce da busca: o store dispara open_source a cada mudança, mas a
   // digitação não deve martelar o backend.
@@ -53,6 +54,15 @@ export function TopBar() {
           onClick={() => void rescan()}
         >
           <RefreshCw />
+        </button>
+        <button
+          className="icobtn"
+          title="Sync to phone"
+          type="button"
+          disabled={!root}
+          onClick={() => void openSync()}
+        >
+          <Smartphone />
         </button>
       </div>
 

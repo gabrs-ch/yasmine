@@ -588,3 +588,20 @@ pub fn playlist_unlink_folder(
     playlist_folder::unlink(&st.db, parse_uuid(&id)?, root_id, &rel_prefix)
         .map_err(|e| e.to_string())
 }
+
+// --- sync com o celular (QR + servidor), ver src/sync_host.rs ---
+
+#[tauri::command]
+pub fn sync_start(app: AppHandle) -> Result<crate::sync_host::SyncInfo, String> {
+    crate::sync_host::start(&app)
+}
+
+#[tauri::command]
+pub fn sync_stop(app: AppHandle) {
+    crate::sync_host::stop(&app);
+}
+
+#[tauri::command]
+pub fn sync_info(app: AppHandle) -> crate::sync_host::SyncInfo {
+    crate::sync_host::info(&app)
+}
