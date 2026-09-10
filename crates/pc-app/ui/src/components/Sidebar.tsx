@@ -38,6 +38,8 @@ export function Sidebar() {
           </div>
         </button>
 
+        <div className="side-sep" />
+
         <div className="chips">
           <button
             className={`chip${sideTab === "playlists" ? " on" : ""}`}
