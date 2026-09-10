@@ -80,7 +80,7 @@ android {
         // O Release passa `-PversionName`/`-PversionCode` derivados da tag; o
         // build local usa o default.
         versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 2
-        versionName = (project.findProperty("versionName") as String?) ?: "0.5.7"
+        versionName = (project.findProperty("versionName") as String?) ?: "0.5.8"
         ndk { abiFilters += abis }
     }
 

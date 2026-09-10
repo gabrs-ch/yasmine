@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "libgen"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "lofty",
 ]
@@ -4271,7 +4271,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "player-audio"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "cpal",
  "rtrb",
@@ -4281,7 +4281,7 @@ dependencies = [
 
 [[package]]
 name = "player-core"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "blake3",
  "image",
@@ -4296,7 +4296,7 @@ dependencies = [
 
 [[package]]
 name = "player-pc"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "directories",
  "image",
@@ -8023,7 +8023,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "yasmine-android-ffi"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "data-encoding",
  "player-core",
@@ -8036,7 +8036,7 @@ dependencies = [
 
 [[package]]
 name = "yasmine-sync"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "blake3",
  "data-encoding",
@@ -8057,7 +8057,7 @@ dependencies = [
 
 [[package]]
 name = "yasmine-sync-host"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "directories",
  "eframe",
