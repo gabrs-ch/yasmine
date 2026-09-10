@@ -16,10 +16,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.media3.common.Player
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -70,6 +74,14 @@ fun NowPlayingBar(player: PlayerConnection) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            IconButton(onClick = { player.toggleShuffle() }, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Filled.Shuffle,
+                    "Shuffle",
+                    tint = if (state.shuffle) scheme.primary else scheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
             IconButton(onClick = { player.previous() }) {
                 Icon(Icons.Filled.SkipPrevious, "Previous", tint = scheme.onSurfaceVariant)
             }
@@ -90,6 +102,14 @@ fun NowPlayingBar(player: PlayerConnection) {
             }
             IconButton(onClick = { player.next() }) {
                 Icon(Icons.Filled.SkipNext, "Next", tint = scheme.onSurfaceVariant)
+            }
+            IconButton(onClick = { player.cycleRepeat() }, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    if (state.repeat == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                    "Repeat",
+                    tint = if (state.repeat == Player.REPEAT_MODE_OFF) scheme.onSurfaceVariant else scheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
 

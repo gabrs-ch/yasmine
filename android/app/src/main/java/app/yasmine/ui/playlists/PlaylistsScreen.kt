@@ -1,6 +1,7 @@
 package app.yasmine.ui.playlists
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -177,17 +179,28 @@ private fun PlaylistDetail(pl: PlaylistFfi, player: PlayerConnection, onBack: ()
                 Text("No local tracks yet.", color = scheme.onSurfaceVariant)
             }
         } else {
-            Button(
-                onClick = { scope.launch { player.playTracks(repo.rows(trackIds), 0) } },
-                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                    containerColor = scheme.primary,
-                    contentColor = scheme.onPrimary,
-                ),
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.padding(vertical = 4.dp),
             ) {
-                Icon(Icons.Filled.PlayArrow, null)
-                Spacer(Modifier.width(6.dp))
-                Text("Play all")
+                Button(
+                    onClick = { scope.launch { player.playTracks(repo.rows(trackIds), 0) } },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = scheme.primary,
+                        contentColor = scheme.onPrimary,
+                    ),
+                ) {
+                    Icon(Icons.Filled.PlayArrow, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Play all")
+                }
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { scope.launch { player.shufflePlay(repo.rows(trackIds)) } },
+                ) {
+                    Icon(Icons.Filled.Shuffle, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Shuffle")
+                }
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(trackIds) { id -> TrackLine(id) }

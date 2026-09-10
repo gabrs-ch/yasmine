@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +21,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -85,6 +89,20 @@ fun LibraryScreen(player: PlayerConnection) {
             Modifier.fillMaxWidth().padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Button(
+                enabled = rows.isNotEmpty(),
+                onClick = { player.shufflePlay(rows) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = scheme.primary,
+                    contentColor = scheme.onPrimary,
+                ),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            ) {
+                Icon(Icons.Filled.Shuffle, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Shuffle", fontSize = 13.sp)
+            }
+            Spacer(Modifier.width(10.dp))
             Text(stats, fontSize = 11.sp, color = scheme.onSurfaceVariant, modifier = Modifier.weight(1f))
             if (scanning) {
                 Text("scanning…", fontSize = 11.sp, color = scheme.onSurfaceVariant)

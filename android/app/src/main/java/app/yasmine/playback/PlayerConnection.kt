@@ -38,6 +38,9 @@ data class PlayerState(
     val positionMs: Long = 0,
     val durationMs: Long = 0,
     val trackId: Long? = null,
+    val shuffle: Boolean = false,
+    /** `Player.REPEAT_MODE_OFF` / `_ALL` / `_ONE`. */
+    val repeat: Int = Player.REPEAT_MODE_OFF,
 )
 
 /**
@@ -79,7 +82,16 @@ class PlayerConnection(
         }, MoreExecutors.directExecutor())
     }
 
-    fun playTracks(rows: List<TrackRowFfi>, startIndex: Int) {
+    /** Toca [rows] a partir de [startIndex], respeitando o modo shuffle atual. */
+    fun playTracks(rows: List<TrackRowFfi>, startIndex: Int) = load(rows, startIndex, null)
+
+    /** Liga o shuffle e começa numa faixa aleatória — o "dar play aleatório". */
+    fun shufflePlay(rows: List<TrackRowFfi>) {
+        val start = if (rows.isEmpty()) 0 else (rows.indices).random()
+        load(rows, start, forceShuffle = true)
+    }
+
+    private fun load(rows: List<TrackRowFfi>, startIndex: Int, forceShuffle: Boolean?) {
         scope.launch {
             val resolved = withContext(Dispatchers.IO) {
                 rows.mapNotNull { row -> repo.playbackInfo(row.id)?.let { row to it } }
@@ -105,6 +117,7 @@ class PlayerConnection(
                     .build()
             }
             val c = controller ?: return@launch
+            forceShuffle?.let { c.shuffleModeEnabled = it }
             val start = startIndex.coerceIn(0, items.lastIndex)
             c.setMediaItems(items, start, 0L)
             c.volume = gainByMediaId[items[start].mediaId] ?: 1f
@@ -117,6 +130,17 @@ class PlayerConnection(
     fun next() = controller?.seekToNext()
     fun previous() = controller?.seekToPrevious()
     fun seekTo(ms: Long) = controller?.seekTo(ms)
+
+    fun toggleShuffle() = controller?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled }
+
+    /** off → all → one → off (mesma ordem do desktop). */
+    fun cycleRepeat() = controller?.let {
+        it.repeatMode = when (it.repeatMode) {
+            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+            else -> Player.REPEAT_MODE_OFF
+        }
+    }
 
     fun release() {
         controller?.removeListener(listener)
@@ -144,6 +168,8 @@ class PlayerConnection(
             positionMs = player.currentPosition.coerceAtLeast(0),
             durationMs = player.duration.coerceAtLeast(0),
             trackId = mediaId?.toLongOrNull(),
+            shuffle = player.shuffleModeEnabled,
+            repeat = player.repeatMode,
         )
     }
 }
