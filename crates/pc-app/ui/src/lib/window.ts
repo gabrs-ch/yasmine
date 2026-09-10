@@ -12,9 +12,9 @@ export const appWindow = {
   close: () => (inTauri ? getCurrentWindow().close() : Promise.resolve()),
 };
 
-// Uma faixa larga e baixa (não um quadrado). Se o WM impuser um piso de
-// altura maior que isso, o MiniBar centraliza o conteúdo e não fica vão.
-const MINI = { w: 560, h: 104 };
+// Uma faixa larga e baixa (não um quadrado). O tamanho é fixado por
+// min == max; ver `enterMiniWindow` sobre por que NÃO usamos setResizable.
+const MINI = { w: 560, h: 116 };
 const NORMAL_MIN = { w: 640, h: 480 };
 
 /** Encolhe a janela pro modo compacto; devolve o tamanho normal pra restaurar. */
@@ -34,7 +34,10 @@ export async function enterMiniWindow(): Promise<[number, number]> {
   // ignorado e a janela fica ocupando a tela inteira.
   if (wasFull) await win.setFullscreen(false);
   if (wasMax) await win.unmaximize();
-  await win.setResizable(false);
+  // NÃO chamar setResizable(false) aqui: no GTK, uma janela não-redimensionável
+  // ignora as geometry hints e trava no tamanho "natural" do conteúdo (~200px
+  // de altura), que era o piso que não dava pra furar. Com a janela
+  // redimensionável e min == max, o tamanho fica fixo e o WM respeita os 116px.
   await win.setMinSize(new LogicalSize(MINI.w, MINI.h));
   await win.setMaxSize(new LogicalSize(MINI.w, MINI.h));
   await win.setSize(new LogicalSize(MINI.w, MINI.h));
