@@ -1,13 +1,15 @@
 //! Carregamento das capas para a interface.
 //!
-//! A lista **não** mostra capa — é uma decisão de densidade e de custo: 25
-//! linhas visíveis seriam 25 texturas subindo e descendo a cada rolagem, e a
-//! direção visual escolhida não pede miniatura por linha. A capa aparece só na
-//! barra do player.
+//! Duas miniaturas por capa (ver `player_core::art`): a de 96px pra
+//! miniatura da linha da lista, a de 512px pra capa em destaque (barra do
+//! player e modo compacto). Pedir a de 512 pra uma miniatura de 32px seria
+//! decodificar 30× mais pixel à toa a cada linha rolada; pedir a de 96 pra
+//! capa em destaque de 56px num monitor HiDPI (= 112px reais) deixa ela
+//! mole. Cada chamador pede o tamanho que precisa.
 //!
-//! Mesmo com uma capa por vez, ler e decodificar JPEG na thread da UI daria
-//! engasgo ao trocar de faixa. Então o disco fica numa thread própria e a UI
-//! só recebe pixels prontos.
+//! Ler e decodificar JPEG na thread da UI daria engasgo — ao rolar a lista
+//! e ao trocar de faixa. Então o disco fica numa thread própria e a UI só
+//! recebe pixels prontos.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -16,11 +18,15 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use eframe::egui;
 use player_core::ArtRef;
 
-type Key = [u8; 32];
+/// Hash da capa + se é a versão grande (512px) ou a pequena (96px). Duas
+/// entradas distintas no cache — a mesma capa pode estar carregada nos dois
+/// tamanhos ao mesmo tempo (linha da lista e player).
+type Key = ([u8; 32], bool);
 
-/// Teto de texturas na GPU. A UI usa uma por vez; a folga é para trocas
-/// rápidas de faixa não recarregarem do disco.
-const MAX_TEXTURES: usize = 32;
+/// Teto de texturas na GPU. Uma lista rolando rápido enche isso de
+/// miniaturas de 96px (leves); a folga é pra rolagem e troca de faixa não
+/// recarregarem do disco a toda hora.
+const MAX_TEXTURES: usize = 64;
 
 struct Entry {
     texture: egui::TextureHandle,
@@ -43,17 +49,16 @@ impl ArtLoader {
         std::thread::Builder::new()
             .name("capas".into())
             .spawn(move || {
-                while let Ok(hash) = req_rx.recv() {
-                    // A miniatura de 96px é a que a barra do player usa; a de
-                    // 512 fica para uma tela de faixa maior, mais adiante.
-                    let path = ArtRef::thumb_path(&cache_dir, &hash, 96);
+                while let Ok(key @ (hash, big)) = req_rx.recv() {
+                    let size = if big { 512 } else { 96 };
+                    let path = ArtRef::thumb_path(&cache_dir, &hash, size);
                     let Ok(image) = image::open(&path) else {
                         continue;
                     };
                     let rgba = image.to_rgba8();
-                    let size = [rgba.width() as usize, rgba.height() as usize];
-                    let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-                    if res_tx.send((hash, color)).is_err() {
+                    let dims = [rgba.width() as usize, rgba.height() as usize];
+                    let color = egui::ColorImage::from_rgba_unmultiplied(dims, rgba.as_raw());
+                    if res_tx.send((key, color)).is_err() {
                         return;
                     }
                 }
@@ -73,11 +78,11 @@ impl ArtLoader {
     pub fn begin_frame(&mut self, ctx: &egui::Context) {
         self.frame += 1;
 
-        while let Ok((hash, image)) = self.results.try_recv() {
-            self.pending.remove(&hash);
+        while let Ok((key, image)) = self.results.try_recv() {
+            self.pending.remove(&key);
             let texture = ctx.load_texture("capa", image, egui::TextureOptions::LINEAR);
             self.textures.insert(
-                hash,
+                key,
                 Entry {
                     texture,
                     last_used: self.frame,
@@ -98,16 +103,18 @@ impl ArtLoader {
         }
     }
 
-    /// Textura da capa, pedindo o carregamento se ainda não estiver pronta.
-    /// Devolver `None` é normal: a faixa pode não ter capa, ou ela ainda estar
-    /// vindo do disco.
-    pub fn texture(&mut self, hash: &Key) -> Option<egui::TextureId> {
-        if let Some(entry) = self.textures.get_mut(hash) {
+    /// Textura da capa no tamanho pedido (`big` = a de 512px, senão a de
+    /// 96px), pedindo o carregamento se ainda não estiver pronta. Devolver
+    /// `None` é normal: a faixa pode não ter capa, ou ela ainda estar vindo
+    /// do disco.
+    pub fn texture(&mut self, hash: &[u8; 32], big: bool) -> Option<egui::TextureId> {
+        let key = (*hash, big);
+        if let Some(entry) = self.textures.get_mut(&key) {
             entry.last_used = self.frame;
             return Some(entry.texture.id());
         }
-        if self.pending.insert(*hash) {
-            let _ = self.requests.send(*hash);
+        if self.pending.insert(key) {
+            let _ = self.requests.send(key);
         }
         None
     }

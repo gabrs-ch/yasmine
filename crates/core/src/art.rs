@@ -17,8 +17,14 @@
 //! deixam o `readdir` lento em alguns sistemas de arquivos.
 //!
 //! **JPEG, não WebP.** O WebP do crate `image` só codifica sem perda, e uma
-//! capa 512px sem perda fica maior que o JPEG de qualidade 85 e mais cara pra
+//! capa 512px sem perda fica maior que o JPEG de qualidade 90 e mais cara pra
 //! decodificar na hora de desenhar a lista.
+//!
+//! **Reamostragem Lanczos3, não amostragem por caixa.** A redução acontece
+//! uma vez por capa distinta, dentro do worker paralelo do scan (que é I/O
+//! bound de qualquer jeito), então o custo a mais do Lanczos não aparece no
+//! relógio — mas a diferença aparece na tela: caixa deixa a capa mole e
+//! serrilhada, Lanczos mantém o contorno.
 
 use std::collections::HashMap;
 use std::fs;
@@ -38,7 +44,7 @@ use crate::db::{Db, Result};
 /// tempo de decodificação na hora de desenhar.
 pub const THUMB_SIZES: [u32; 2] = [96, 512];
 
-const JPEG_QUALITY: u8 = 85;
+const JPEG_QUALITY: u8 = 90;
 
 /// Entrada para semear o cache: hash da capa e dimensões do original.
 pub type KnownArt = ([u8; 32], (u32, u32));
@@ -129,9 +135,20 @@ impl ArtCache {
         for size in THUMB_SIZES {
             // Teto, nunca ampliação.
             let target = size.min(longest).max(1);
-            // `thumbnail` é amostragem por caixa: para reduções grandes é
-            // muito mais rápido que Lanczos e a diferença não aparece em 96px.
-            let thumb = image.thumbnail(target, target).to_rgb8();
+            let thumb = if target >= longest {
+                // Capa já cabe: nada a reduzir, só reencodar.
+                image.to_rgb8()
+            } else {
+                // Escala proporcional pelo maior lado (capa não é sempre
+                // quadrada), com Lanczos3 — o filtro que preserva o
+                // contorno na redução.
+                let scale = f64::from(target) / f64::from(longest);
+                let w = ((f64::from(width) * scale).round() as u32).max(1);
+                let h = ((f64::from(height) * scale).round() as u32).max(1);
+                image
+                    .resize_exact(w, h, image::imageops::FilterType::Lanczos3)
+                    .to_rgb8()
+            };
             let path = ArtRef::thumb_path(&self.dir, &hash, size);
             if let Err(err) = write_jpeg(&path, &thumb) {
                 // Cache é reconstruível: falhar aqui não invalida a faixa.

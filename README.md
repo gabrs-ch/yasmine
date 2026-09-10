@@ -102,7 +102,10 @@ ordenado (400 KB para 50k faixas) e a UI busca só as linhas visíveis — nunca
 
 **Capa deduplicada por BLAKE3, miniaturas em disco.** É o maior consumidor de
 memória de um player: a mesma arte se repete em toda faixa do álbum. Original
-nunca entra na RAM.
+nunca entra na RAM. Duas miniaturas por capa (96px pra linha da lista, 512px
+pra capa em destaque), reamostradas com Lanczos3 — a redução roda uma vez
+por capa, dentro do worker paralelo do scan que já é I/O bound, então o
+custo a mais não aparece no relógio, mas a diferença aparece na tela.
 
 **Arquivo manda na metadata; o DB é cache derivado.** Estado do usuário
 (playlist, plays, rating) vive à parte, com timestamp por campo. É o que
@@ -320,18 +323,19 @@ janela da vizinha (topo/lista, sidebar/lista, e um realce quase transparente
 no topo do player, como se ele flutuasse à frente) — antes a única
 articulação entre elas era a diferença de tom entre `PANEL` e `BG`.
 
-"Pasta…", a única ação possível antes de escolher uma biblioteca, virou
-botão de ação primária (preenchido no acento) nesse momento específico — e só
-nesse: com a biblioteca carregada ele volta a ser um botão neutro, porque aí
-já existem várias ações igualmente válidas, e destacar uma seria hierarquia
-falsa. A mesma ação primária aparece de novo, maior, na tela de boas-vindas
-(que também ganhou o halo atrás da marca) — a dica de texto sozinha numa tela
-em branco era fácil de não notar. O campo de busca ganhou uma lupa à
-esquerda, mesma fonte de ícone do resto.
+"Pasta…", a única ação possível antes de escolher uma biblioteca, é botão de
+ação primária (preenchido no acento) nesse momento específico — e só nesse:
+com a biblioteca carregada, "trocar de pasta" e "reescanear" viram ícones
+(pasta e setas circulares), com o que fazem no tooltip. Botão de texto na
+barra só quando o texto É a informação (a primeira escolha, numa tela vazia
+— e a tela de boas-vindas repete essa oferta grande, com o halo atrás da
+marca). Depois disso, ação ocasional não precisa de rótulo ocupando a
+barra. O campo de busca ganhou uma lupa à esquerda, mesma fonte de ícone do
+resto.
 
 **Todo ícone da interface** — transporte, shuffle/repeat/modo compacto, "+"
-de nova playlist, lupa da busca, os três controles de janela — vem da mesma
-fonte: [Lucide](https://lucide.dev) (ISC, `assets/lucide.ttf`,
+de nova playlist, lupa da busca, pasta e reescanear, os três controles de
+janela — vem da mesma fonte: [Lucide](https://lucide.dev) (ISC, `assets/lucide.ttf`,
 `assets/LUCIDE-LICENSE.txt`), embutida no binário como qualquer outro
 asset. Começou como forma vetorial desenhada à mão (`Painter::line_segment`,
 `convex_polygon`) pela mesma razão de sempre — traço nítido garantido, sem
@@ -355,20 +359,22 @@ cantos-arredondados do resto dos botões — um "controle de janela" lê melhor
 como forma fechada em si, no espírito dos três pontinhos do macOS, do que
 como mais um botão retangular na fileira.
 
-**Texto**: [Inter](https://rsms.me/inter) (OFL, `assets/Inter-Regular.ttf` +
-`assets/Inter-SemiBold.ttf`) no lugar da fonte padrão que o `egui` já traz
-embutida, e [JetBrains Mono](https://www.jetbrains.com/lp/mono/) (OFL,
-build "NL" — sem ligadura de programação, que não faz sentido pra exibir
-duração de faixa) no lugar do mono padrão. A fonte padrão existe pra rodar
-em qualquer lugar sem asset nenhum; "roda em qualquer lugar" e "bonita" são
-objetivos diferentes, e só dá pra ter os dois embutindo a própria. As duas
-entram com prioridade `Highest` nas famílias `Proportional`/`Monospace` — não
-substituem o que o `egui` já registrou ali, ficam na frente; o que sobra
-(emoji, por exemplo) continua caindo nas fontes padrão como reserva, em vez
-de sumir. O título da faixa — na lista e na barra do player — ganhou peso de
-verdade (`theme::strong`, a família SemiBold) no lugar do truque de desenhar
-o texto duas vezes com um deslocamento de 0,4px que fingia negrito antes de
-ter uma fonte de peso variável no binário.
+**Texto**: [IBM Plex Sans](https://www.ibm.com/plex/) (OFL,
+`assets/IBMPlexSans-{Regular,SemiBold}.ttf`) no lugar da fonte padrão que o
+`egui` já traz embutida, e [JetBrains Mono](https://www.jetbrains.com/lp/mono/)
+(OFL, build "NL" — sem ligadura de programação, que não faz sentido pra
+exibir duração de faixa) no lugar do mono padrão. A fonte padrão existe pra
+rodar em qualquer lugar sem asset nenhum; "roda em qualquer lugar" e
+"bonita" são objetivos diferentes, e só dá pra ter os dois embutindo a
+própria. Plex é humanista, não a neogrotesca genérica — tem calor e desenho
+próprio sem custar legibilidade em tamanho de UI (a rodada anterior com
+Inter lia como "software corporativo"). As duas entram com prioridade
+`Highest` nas famílias `Proportional`/`Monospace` — não substituem o que o
+`egui` já registrou ali, ficam na frente; o que sobra (emoji, por exemplo)
+continua caindo nas fontes padrão como reserva, em vez de sumir. O título da
+faixa — na lista e na barra do player — usa peso de verdade (`theme::strong`,
+a família SemiBold), não o texto desenhado duas vezes com deslocamento que
+fingia negrito antes de ter fonte com peso no binário.
 
 **A marca do Yasmine** é uma nota musical brotando folhas — arte fornecida
 pelo usuário, cor chapada, sem gradiente. Tem curva de verdade (a nota, as

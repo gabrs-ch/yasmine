@@ -835,27 +835,38 @@ impl App {
             // ficava colado, esquisito. 12px é o mesmo respiro que sobra nos
             // outros cantos agora.
             ui.add_space(12.0);
-            // Sem pasta ainda, "Pasta…" é a única coisa que dá pra fazer —
-            // ganha o acento de ação primária. Com biblioteca carregada vira
-            // reconfiguração ocasional, não pede mais destaque que isso.
-            let pick = if self.root.is_none() {
-                primary_button(ui, "Escolher pasta de música…")
+            // Antes de escolher uma biblioteca, "Pasta…" é a única coisa que
+            // dá pra fazer — fica como botão rotulado de ação primária, e a
+            // tela de boas-vindas repete essa oferta grande. Com biblioteca
+            // carregada, vira um ícone de pasta com o caminho ao lado:
+            // reconfiguração ocasional não precisa de um botão de texto
+            // ocupando a barra.
+            if self.root.is_none() {
+                if primary_button(ui, "Escolher pasta de música…").clicked() {
+                    self.pick_folder();
+                }
             } else {
-                ui.button("Pasta…")
-            };
-            if pick.clicked() {
-                self.pick_folder();
-            }
-
-            if let Some(root) = &self.root {
-                let label = root.to_string_lossy();
-                ui.label(
-                    egui::RichText::new(shorten(&label, 48))
-                        .font(theme::small())
-                        .color(theme::DIM),
-                );
-                if self.scan.is_none() && ui.button("Reescanear").clicked() {
-                    self.start_scan(root.clone());
+                if icon_button(ui, theme::icon_glyph::FOLDER)
+                    .on_hover_text("Escolher outra pasta de música")
+                    .clicked()
+                {
+                    self.pick_folder();
+                }
+                if let Some(root) = &self.root {
+                    let label = root.to_string_lossy();
+                    ui.label(
+                        egui::RichText::new(shorten(&label, 44))
+                            .font(theme::small())
+                            .color(theme::DIM),
+                    );
+                }
+                if self.scan.is_none()
+                    && icon_button(ui, theme::icon_glyph::REFRESH)
+                        .on_hover_text("Reescanear a pasta")
+                        .clicked()
+                    && let Some(root) = self.root.clone()
+                {
+                    self.start_scan(root);
                 }
             }
 
@@ -1203,7 +1214,9 @@ impl App {
                     }
 
                     let art_rect = cols.art(rect);
-                    if let Some(texture) = row.art_hash.and_then(|hash| self.art.texture(&hash)) {
+                    if let Some(texture) =
+                        row.art_hash.and_then(|hash| self.art.texture(&hash, false))
+                    {
                         rounded_image(painter, art_rect, texture, theme::RADIUS_SM);
                     } else {
                         painter.rect_filled(
@@ -1535,7 +1548,7 @@ impl App {
             .now
             .as_ref()
             .and_then(|row| row.art_hash)
-            .and_then(|hash| self.art.texture(&hash));
+            .and_then(|hash| self.art.texture(&hash, true));
         if let Some(texture) = texture {
             rounded_image(painter, cover, texture, radius);
         } else {
@@ -2283,6 +2296,33 @@ fn transport(ui: &mut egui::Ui, glyph: Glyph) -> egui::Response {
         Align2::CENTER_CENTER,
         ch,
         theme::icon(16.0),
+        color,
+    );
+
+    response
+}
+
+/// Botão de ícone genérico — o mesmo tratamento do transporte (fundo de
+/// hover arredondado, glifo neutro), pra qualquer glifo da fonte de ícones.
+/// Quem chama põe o `on_hover_text` explicando o que faz, já que sem rótulo
+/// o ícone sozinho nem sempre é óbvio.
+fn icon_button(ui: &mut egui::Ui, glyph: char) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(28.0, 26.0), Sense::click());
+    let painter = ui.painter();
+
+    if response.hovered() {
+        painter.rect_filled(rect, CornerRadius::same(theme::RADIUS_SM), theme::HOVER);
+    }
+    let color = if response.hovered() {
+        theme::TEXT
+    } else {
+        theme::DIM
+    };
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph,
+        theme::icon(15.0),
         color,
     );
 

@@ -19,19 +19,21 @@ use eframe::egui::{self, Color32, CornerRadius, FontFamily, FontId, Stroke, Text
 /// consistente (e bonito) que reinventar cada forma em `Painter::line`.
 const LUCIDE_TTF: &[u8] = include_bytes!("../assets/lucide.ttf");
 
-/// Fontes de texto — [Inter](https://rsms.me/inter) (OFL,
-/// `assets/INTER-LICENSE.txt`) no lugar da fonte padrão que o `egui` já traz
-/// embutida. A fonte padrão existe pra rodar em qualquer lugar sem precisar
-/// de asset nenhum — mas "roda em qualquer lugar" e "bonita" são objetivos
-/// diferentes, e só dá pra ter os dois embutindo a nossa. Regular pro corpo
-/// do texto, SemiBold pro título de faixa — peso de verdade, não a faixa
-/// desenhada duas vezes com deslocamento que fazia esse papel antes.
-const INTER_REGULAR_TTF: &[u8] = include_bytes!("../assets/Inter-Regular.ttf");
-const INTER_SEMIBOLD_TTF: &[u8] = include_bytes!("../assets/Inter-SemiBold.ttf");
+/// Fontes de texto — [IBM Plex Sans](https://www.ibm.com/plex/) (OFL,
+/// `assets/IBM-PLEX-LICENSE.txt`) no lugar da fonte padrão que o `egui` já
+/// traz embutida. A padrão existe pra rodar em qualquer lugar sem asset
+/// nenhum — mas "roda em qualquer lugar" e "bonita" são objetivos
+/// diferentes, e só dá pra ter os dois embutindo a nossa. Plex é humanista
+/// (não a neogrotesca genérica): tem calor e desenho próprio sem abrir mão
+/// da legibilidade em tamanho de UI. Regular pro corpo, SemiBold pro título
+/// de faixa — peso de verdade, não o texto desenhado duas vezes com
+/// deslocamento que fazia esse papel antes.
+const PLEX_REGULAR_TTF: &[u8] = include_bytes!("../assets/IBMPlexSans-Regular.ttf");
+const PLEX_SEMIBOLD_TTF: &[u8] = include_bytes!("../assets/IBMPlexSans-SemiBold.ttf");
 /// Números — duração, faixa — em mono. [JetBrains Mono](https://www.jetbrains.com/lp/mono/)
 /// (OFL, `assets/JETBRAINS-MONO-LICENSE.txt`; build "NL", sem ligadura de
 /// programação — não faz sentido aqui, é só dígito e `:`), no lugar do mono
-/// padrão do `egui` pela mesma razão do Inter: parear uma fonte de corpo
+/// padrão do `egui` pela mesma razão do Plex: parear uma fonte de corpo
 /// desenhada com cuidado com um mono qualquer desfaz o cuidado.
 const JETBRAINS_MONO_TTF: &[u8] = include_bytes!("../assets/JetBrainsMonoNL-Regular.ttf");
 
@@ -47,7 +49,7 @@ pub fn icon(size: f32) -> FontId {
 }
 
 fn semibold_family() -> FontFamily {
-    FontFamily::Name("inter-semibold".into())
+    FontFamily::Name("plex-semibold".into())
 }
 
 /// Título de faixa — na lista e na barra do player. Peso de verdade (fonte
@@ -70,6 +72,8 @@ pub mod icon_glyph {
     pub const PICTURE_IN_PICTURE: char = '\u{e3ae}';
     pub const SEARCH: char = '\u{e151}';
     pub const PLUS: char = '\u{e13d}';
+    pub const FOLDER: char = '\u{e0d7}';
+    pub const REFRESH: char = '\u{e145}';
     // `minimize`/`maximize` dedicados existem no Lucide (setas de canto
     // pra dentro/fora), mas na prática lêem como "entrar/sair de tela
     // cheia" — a convenção universal de SO pra essas duas ações é mesmo o
@@ -132,22 +136,22 @@ pub fn apply(ctx: &egui::Context) {
         }],
     ));
 
-    // Inter e JetBrains Mono entram com prioridade `Highest` nas famílias
-    // padrão (`Proportional`/`Monospace`) — não substituem o que o `egui`
-    // já registrou ali, ficam na frente. As fontes padrão continuam de
-    // reserva pra glifo que o Inter não cobre (emoji, por exemplo), em vez
+    // Plex Sans e JetBrains Mono entram com prioridade `Highest` nas
+    // famílias padrão (`Proportional`/`Monospace`) — não substituem o que o
+    // `egui` já registrou ali, ficam na frente. As fontes padrão continuam
+    // de reserva pra glifo que o Plex não cobre (emoji, por exemplo), em vez
     // de sumir ou virar um quadrado.
     ctx.add_font(egui::epaint::text::FontInsert::new(
-        "inter-regular",
-        egui::FontData::from_static(INTER_REGULAR_TTF),
+        "plex-regular",
+        egui::FontData::from_static(PLEX_REGULAR_TTF),
         vec![egui::epaint::text::InsertFontFamily {
             family: FontFamily::Proportional,
             priority: egui::epaint::text::FontPriority::Highest,
         }],
     ));
     ctx.add_font(egui::epaint::text::FontInsert::new(
-        "inter-semibold",
-        egui::FontData::from_static(INTER_SEMIBOLD_TTF),
+        "plex-semibold",
+        egui::FontData::from_static(PLEX_SEMIBOLD_TTF),
         vec![egui::epaint::text::InsertFontFamily {
             family: semibold_family(),
             priority: egui::epaint::text::FontPriority::Highest,
