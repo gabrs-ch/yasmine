@@ -1,6 +1,7 @@
 package app.yasmine.ui.player
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +43,7 @@ import app.yasmine.playback.PlayerConnection
 import app.yasmine.ui.common.Cover
 
 @Composable
-fun NowPlayingBar(player: PlayerConnection) {
+fun NowPlayingBar(player: PlayerConnection, onOpen: () -> Unit = {}) {
     val state by player.state.collectAsState()
     if (!state.hasQueue) return
     val scheme = MaterialTheme.colorScheme
@@ -52,6 +53,7 @@ fun NowPlayingBar(player: PlayerConnection) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             .background(scheme.surface)
+            .clickable(onClick = onOpen)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

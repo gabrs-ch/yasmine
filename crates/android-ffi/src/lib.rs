@@ -172,6 +172,33 @@ impl YasmineLibrary {
             track_ids.into_iter().map(player_core::TrackId).collect();
         Ok(player_core::playlist::append(&mut db, uuid, &ids)? as u32)
     }
+
+    /// Tira a faixa da playlist (a primeira ocorrência, se estiver repetida).
+    /// Marca o túmulo — a remoção viaja no sync (schema v5).
+    pub fn playlist_remove_track(&self, id: String, track_id: i64) -> Result<()> {
+        let db = self.lock()?;
+        let uuid = uuid::Uuid::parse_str(&id)?;
+        let target = player_core::TrackId(track_id);
+        if let Some(item) = player_core::playlist::items(&db, uuid)?
+            .iter()
+            .find(|i| i.track == Some(target))
+        {
+            player_core::playlist::remove(&db, uuid, &item.position)?;
+        }
+        Ok(())
+    }
+
+    /// Apaga o arquivo da faixa do disco do celular e reindexa `music_root`.
+    /// A faixa some do índice (e vira buraco nas playlists); o próximo sync
+    /// traz de volta.
+    pub fn delete_track(&self, id: i64, music_root: String) -> Result<()> {
+        let mut db = self.lock()?;
+        if let Some(info) = player_core::library::playback_info(&db, player_core::TrackId(id))? {
+            let _ = std::fs::remove_file(&info.path);
+        }
+        player_core::scan(&mut db, std::path::Path::new(&music_root), &self.art)?;
+        Ok(())
+    }
 }
 
 impl YasmineLibrary {

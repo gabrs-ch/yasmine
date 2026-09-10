@@ -62,7 +62,14 @@ class LibraryRepository(context: Context) {
     suspend fun renamePlaylist(id: String, name: String) = io { library.renamePlaylist(id, name) }
     suspend fun deletePlaylist(id: String) = io { library.deletePlaylist(id) }
     suspend fun playlistAppend(id: String, trackIds: List<Long>): UInt =
-        io { library.playlistAppend(id, trackIds) }
+        io { library.playlistAppend(id, trackIds).also { _revision.value += 1 } }
+
+    suspend fun playlistRemoveTrack(playlistId: String, trackId: Long) =
+        io { library.playlistRemoveTrack(playlistId, trackId); _revision.value += 1 }
+
+    /** Apaga o arquivo do celular + reindexa. Some até o próximo sync. */
+    suspend fun deleteTrack(trackId: Long) =
+        io { library.deleteTrack(trackId, musicDir.absolutePath); _revision.value += 1 }
 
     // --- sync ---
 

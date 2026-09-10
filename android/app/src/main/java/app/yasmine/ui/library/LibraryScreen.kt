@@ -1,8 +1,6 @@
 package app.yasmine.ui.library
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,13 +20,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -47,13 +48,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.yasmine.YasmineApp
 import app.yasmine.playback.PlayerConnection
-import app.yasmine.ui.common.Cover
+import app.yasmine.ui.common.AddToPlaylistDialog
+import app.yasmine.ui.common.TrackListItem
 import kotlinx.coroutines.launch
 import uniffi.yasmine_ffi.SortFfi
 import uniffi.yasmine_ffi.TrackRowFfi
 
 @Composable
-fun LibraryScreen(player: PlayerConnection) {
+fun LibraryScreen(player: PlayerConnection, onOpenPlayer: () -> Unit = {}) {
     val repo = (LocalContext.current.applicationContext as YasmineApp).repo
     val scope = rememberCoroutineScope()
     val revision by repo.revision.collectAsState()
@@ -64,6 +66,8 @@ fun LibraryScreen(player: PlayerConnection) {
     var loading by remember { mutableStateOf(true) }
     var scanning by remember { mutableStateOf(false) }
     var stats by remember { mutableStateOf("") }
+    var addTo by remember { mutableStateOf<Long?>(null) }
+    var confirmDelete by remember { mutableStateOf<TrackRowFfi?>(null) }
 
     LaunchedEffect(query, revision) {
         loading = true
@@ -132,10 +136,54 @@ fun LibraryScreen(player: PlayerConnection) {
             }
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 items(rows, key = { it.id }) { row ->
-                    TrackRow(row) { player.playTracks(rows, rows.indexOf(row)) }
+                    TrackListItem(
+                        title = row.title.ifBlank { "(untitled)" },
+                        subtitle = listOfNotNull(row.artist, row.album).joinToString(" · ").ifBlank { "—" },
+                        artHash = row.artHash,
+                        onClick = {
+                            player.playTracks(rows, rows.indexOf(row))
+                            onOpenPlayer()
+                        },
+                        menu = { dismiss ->
+                            DropdownMenuItem(
+                                text = { Text("Add to playlist") },
+                                onClick = { dismiss(); addTo = row.id },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete from library") },
+                                onClick = { dismiss(); confirmDelete = row },
+                            )
+                        },
+                    )
                 }
             }
         }
+    }
+
+    addTo?.let { id ->
+        AddToPlaylistDialog(trackId = id, onDone = { addTo = null })
+    }
+
+    confirmDelete?.let { row ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("Delete from library?") },
+            text = {
+                Text(
+                    "\"${row.title}\" — removes the file from this phone and " +
+                        "re-scans. It comes back on the next sync.",
+                    color = scheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val t = row
+                    confirmDelete = null
+                    scope.launch { runCatching { repo.deleteTrack(t.id) } }
+                }) { Text("Delete", color = scheme.error) }
+            },
+            dismissButton = { TextButton({ confirmDelete = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -171,33 +219,3 @@ private fun SearchPill(
     }
 }
 
-@Composable
-private fun TrackRow(row: TrackRowFfi, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Cover(row.artHash, 96, Modifier.size(42.dp), corner = 6)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                row.title.ifBlank { "(untitled)" },
-                style = MaterialTheme.typography.bodyLarge,
-                color = scheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                listOfNotNull(row.artist, row.album).joinToString(" · ").ifBlank { "—" },
-                fontSize = 11.5.sp,
-                color = scheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
