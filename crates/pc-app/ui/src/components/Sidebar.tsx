@@ -1,17 +1,21 @@
+import { useStore } from "../store";
 import { Plus, LibraryBig } from "./icons";
-
-/* Fase 1: casca estática com os dados de exemplo do mockup. O conteúdo real
-   (playlists, artistas, contagens) entra na Fase 2 via comandos Tauri. */
-
-const PLACEHOLDER_PLAYLISTS = [
-  { name: "Late Night Drive", sub: "Playlist · 42 tracks", cover: "a3" as const },
-  { name: "Focus Mix", sub: "Playlist · 68 tracks · linked folder", grid: ["a1", "a6", "a4", "a2"] },
-  { name: "wildlands", sub: "Playlist · 25 tracks", cover: "a5" as const },
-  { name: "I've been for a walking", sub: "Playlist · 17 tracks", cover: "a8" as const },
-  { name: "Rainy Sunday", sub: "Playlist · 31 tracks", cover: "a7" as const },
-];
+import { Thumb } from "./Thumb";
 
 export function Sidebar() {
+  const stats = useStore((s) => s.stats);
+  const playlists = useStore((s) => s.playlists);
+  const artists = useStore((s) => s.artists);
+  const sideTab = useStore((s) => s.sideTab);
+  const source = useStore((s) => s.source);
+  const setSideTab = useStore((s) => s.setSideTab);
+  const openSource = useStore((s) => s.openSource);
+
+  const libActive = source.kind === "library";
+  const libSub = stats
+    ? `${stats.tracks.toLocaleString()} tracks · ${stats.albums.toLocaleString()} albums`
+    : "…";
+
   return (
     <aside className="card side">
       <div className="side-head">
@@ -22,42 +26,82 @@ export function Sidebar() {
       </div>
 
       <div className="rows">
-        <div className="row on">
-          <div className="thumb lib">
-            <LibraryBig />
-          </div>
+        <button
+          className={`row${libActive ? " on" : ""}`}
+          type="button"
+          onClick={() => void openSource({ kind: "library" })}
+        >
+          <Thumb covers={[]} seed="library" glyph={<LibraryBig />} />
           <div className="r-txt">
             <div className="r-name">Your Library</div>
-            <div className="r-sub">3,184 tracks · 291 albums</div>
+            <div className="r-sub">{libSub}</div>
           </div>
-        </div>
+        </button>
 
-        <div className="chips" style={{ padding: "10px 8px 6px" }}>
-          <button className="chip on" type="button">
+        <div className="chips">
+          <button
+            className={`chip${sideTab === "playlists" ? " on" : ""}`}
+            type="button"
+            onClick={() => setSideTab("playlists")}
+          >
             Playlists
           </button>
-          <button className="chip" type="button">
+          <button
+            className={`chip${sideTab === "artists" ? " on" : ""}`}
+            type="button"
+            onClick={() => setSideTab("artists")}
+          >
             Artists
           </button>
         </div>
 
-        {PLACEHOLDER_PLAYLISTS.map((pl) => (
-          <div className="row" key={pl.name}>
-            {"grid" in pl && pl.grid ? (
-              <div className="thumb grid">
-                {pl.grid.map((g, i) => (
-                  <div key={i} className={g} />
-                ))}
-              </div>
-            ) : (
-              <div className={`thumb ${pl.cover}`} />
-            )}
-            <div className="r-txt">
-              <div className="r-name">{pl.name}</div>
-              <div className="r-sub">{pl.sub}</div>
-            </div>
-          </div>
-        ))}
+        {sideTab === "playlists" &&
+          playlists.map((pl) => {
+            const on = source.kind === "playlist" && source.id === pl.id;
+            return (
+              <button
+                className={`row${on ? " on" : ""}`}
+                key={pl.id}
+                type="button"
+                onClick={() => void openSource({ kind: "playlist", id: pl.id })}
+              >
+                <Thumb covers={pl.covers} seed={pl.id} />
+                <div className="r-txt">
+                  <div className="r-name">{pl.name}</div>
+                  <div className="r-sub">
+                    Playlist · {pl.items} tracks{pl.linked ? " · linked folder" : ""}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        {sideTab === "playlists" && playlists.length === 0 && (
+          <div className="side-label">No playlists yet</div>
+        )}
+
+        {sideTab === "artists" &&
+          artists.map((ar) => {
+            const on = source.kind === "artist" && source.id === ar.id;
+            return (
+              <button
+                className={`row${on ? " on" : ""}`}
+                key={ar.id}
+                type="button"
+                onClick={() => void openSource({ kind: "artist", id: ar.id })}
+              >
+                <Thumb covers={[]} seed={`artist-${ar.id}`} round />
+                <div className="r-txt">
+                  <div className="r-name">{ar.name}</div>
+                  <div className="r-sub">
+                    Artist · {ar.tracks} {ar.tracks === 1 ? "track" : "tracks"}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        {sideTab === "artists" && artists.length === 0 && (
+          <div className="side-label">No artists indexed</div>
+        )}
       </div>
     </aside>
   );

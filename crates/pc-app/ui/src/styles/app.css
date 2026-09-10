@@ -253,6 +253,10 @@ body {
   padding: 7px 8px;
   border-radius: 8px;
   cursor: default;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
 }
 .row:hover {
   background: var(--hover);
@@ -281,6 +285,21 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+/* Uma célula da miniatura: gradiente de fallback + (se houver) a capa por
+   cima. Se a <img> falhar (404 no art://), o gradiente fica. */
+.tile {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+.tile img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .r-txt {
   min-width: 0;
@@ -421,7 +440,8 @@ body {
   width: 34px;
   height: 34px;
   border-radius: 5px;
-  object-fit: cover;
+  overflow: hidden;
+  position: relative;
 }
 .track .tt {
   font-size: 13.5px;
@@ -705,6 +725,85 @@ body {
 .lib svg {
   width: 20px;
   height: 20px;
+}
+
+/* ---- empty state (sem pasta escolhida) ---- */
+.main.empty {
+  align-items: center;
+  justify-content: center;
+}
+.empty-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 40px;
+}
+.empty-mark {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--accent-bright), var(--accent-dim));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 10px 30px -8px rgba(124, 92, 255, 0.5);
+}
+.empty-mark svg {
+  width: 30px;
+  height: 30px;
+}
+.empty-text {
+  color: var(--dim);
+  font-size: 13px;
+}
+.empty-btn {
+  margin-top: 2px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: default;
+}
+.empty-btn:hover {
+  background: var(--accent-bright);
+}
+
+/* ---- scan toast ---- */
+.scan-toast {
+  position: fixed;
+  left: 280px;
+  bottom: 104px;
+  z-index: 50;
+  background: var(--elevated);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--dim);
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+/* ---- linha de faixa ainda não carregada (placeholder do virtual scroll) ---- */
+.track.skeleton .tt::after,
+.track.skeleton .ar::after,
+.track.skeleton .al::after {
+  content: "";
+  display: block;
+  height: 9px;
+  width: 60%;
+  border-radius: 3px;
+  background: var(--elevated);
+}
+.track.skeleton .ar::after {
+  width: 40%;
+}
+.track.skeleton .ca {
+  background: var(--elevated);
 }
 
 /* scrollbars discretas, no tom do vão */
