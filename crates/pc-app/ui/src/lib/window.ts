@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 
 /** Fora do webview do Tauri (ex.: `vite dev` aberto no navegador pra comparar
  *  com o mockup), os controles de janela viram no-op em vez de estourar. */
@@ -11,3 +11,29 @@ export const appWindow = {
   toggleMaximize: () => (inTauri ? getCurrentWindow().toggleMaximize() : Promise.resolve()),
   close: () => (inTauri ? getCurrentWindow().close() : Promise.resolve()),
 };
+
+const MINI = { w: 360, h: 92 };
+const NORMAL_MIN = { w: 640, h: 480 };
+
+/** Encolhe a janela pro modo compacto; devolve o tamanho normal pra restaurar. */
+export async function enterMiniWindow(): Promise<[number, number]> {
+  if (!inTauri) return [1080, 720];
+  const win = getCurrentWindow();
+  const [size, factor] = await Promise.all([win.outerSize(), win.scaleFactor()]);
+  const normal: [number, number] = [size.width / factor, size.height / factor];
+  await win.setResizable(false);
+  await win.setMinSize(new LogicalSize(MINI.w, MINI.h));
+  await win.setSize(new LogicalSize(MINI.w, MINI.h));
+  await win.setAlwaysOnTop(true);
+  return normal;
+}
+
+export async function exitMiniWindow(normal: [number, number] | null): Promise<void> {
+  if (!inTauri) return;
+  const win = getCurrentWindow();
+  const [w, h] = normal ?? [1080, 720];
+  await win.setAlwaysOnTop(false);
+  await win.setMinSize(new LogicalSize(NORMAL_MIN.w, NORMAL_MIN.h));
+  await win.setSize(new LogicalSize(w, h));
+  await win.setResizable(true);
+}

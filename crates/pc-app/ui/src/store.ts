@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { enterMiniWindow, exitMiniWindow } from "./lib/window";
 import {
   api,
   onPlaybackState,
@@ -37,6 +38,10 @@ interface AppStore {
   scan: { active: boolean; done: number } | null;
   toast: string | null;
   playback: Playback | null;
+
+  mini: boolean;
+  normalSize: [number, number] | null;
+  toggleMini: () => Promise<void>;
 
   init: () => Promise<void>;
   refreshLibrary: () => Promise<void>;
@@ -103,6 +108,22 @@ export const useStore = create<AppStore>((set, get) => ({
   scan: null,
   toast: null,
   playback: null,
+  mini: false,
+  normalSize: null,
+
+  toggleMini: async () => {
+    try {
+      if (get().mini) {
+        await exitMiniWindow(get().normalSize);
+        set({ mini: false });
+      } else {
+        const normal = await enterMiniWindow();
+        set({ mini: true, normalSize: normal });
+      }
+    } catch (e) {
+      flash(`mini: ${String(e)}`, set);
+    }
+  },
 
   init: async () => {
     onPlaybackState((p) => set({ playback: p }));

@@ -68,10 +68,15 @@ export function MainPane() {
   const open = useStore((s) => s.open);
   const total = useStore((s) => s.total);
   const nowId = useStore((s) => s.playback?.now?.id ?? null);
+  const source = useStore((s) => s.source);
   const playAt = useStore((s) => s.playAt);
+  const movePlaylistItem = useStore((s) => s.movePlaylistItem);
+  const isPlaylist = source.kind === "playlist";
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<Map<number, TrackRow>>(new Map());
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [overIdx, setOverIdx] = useState<number | null>(null);
 
   // Trocar de fonte zera a janela carregada e volta o scroll pro topo.
   const openKey = open ? `${open.kind}:${open.title}:${total}` : "none";
@@ -174,11 +179,48 @@ export function MainPane() {
                 );
               }
               const playing = nowId != null && row.id === nowId;
+              const cls =
+                `track${playing ? " playing" : ""}` +
+                `${dragIdx === vi.index ? " dragging" : ""}` +
+                `${overIdx === vi.index && dragIdx !== vi.index ? " drop-target" : ""}`;
               return (
                 <div
-                  className={`track${playing ? " playing" : ""}`}
+                  className={cls}
                   style={style}
                   key={vi.key}
+                  draggable={isPlaylist}
+                  onDragStart={
+                    isPlaylist
+                      ? (e) => {
+                          setDragIdx(vi.index);
+                          e.dataTransfer.effectAllowed = "move";
+                        }
+                      : undefined
+                  }
+                  onDragOver={
+                    isPlaylist
+                      ? (e) => {
+                          e.preventDefault();
+                          setOverIdx(vi.index);
+                        }
+                      : undefined
+                  }
+                  onDrop={
+                    isPlaylist
+                      ? (e) => {
+                          e.preventDefault();
+                          if (dragIdx != null && dragIdx !== vi.index) {
+                            void movePlaylistItem(dragIdx, vi.index);
+                          }
+                          setDragIdx(null);
+                          setOverIdx(null);
+                        }
+                      : undefined
+                  }
+                  onDragEnd={() => {
+                    setDragIdx(null);
+                    setOverIdx(null);
+                  }}
                   onDoubleClick={() => void playAt(vi.index)}
                   onContextMenu={(e) => openContextMenu(e, trackMenu(row, vi.index))}
                 >

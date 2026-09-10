@@ -469,6 +469,15 @@ body {
   color: var(--faint);
   text-align: right;
 }
+.track.dragging {
+  opacity: 0.4;
+}
+.track.drop-target {
+  box-shadow: inset 0 2px 0 var(--accent-bright);
+}
+.track[draggable="true"] {
+  cursor: grab;
+}
 .track.playing::before {
   content: "";
   position: absolute;
@@ -775,6 +784,73 @@ body {
 }
 .empty-btn:hover {
   background: var(--accent-bright);
+}
+
+/* ---- modo compacto ---- */
+.mini-win {
+  border-radius: 10px;
+}
+.mini {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 12px;
+  background: var(--ground);
+}
+.mini-cover {
+  width: 44px;
+  height: 44px;
+  border-radius: 7px;
+  flex: none;
+  overflow: hidden;
+  position: relative;
+}
+.mini-cover img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mini-txt {
+  flex: 1;
+  min-width: 0;
+}
+.mini-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mini-sub {
+  font-size: 10.5px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.mini-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.mini-transport .playbtn {
+  width: 28px;
+  height: 28px;
+}
+.mini-transport .playbtn svg {
+  width: 13px;
+  height: 13px;
+}
+.mini-transport .tbtn svg {
+  width: 15px;
+  height: 15px;
 }
 
 /* ---- menu de contexto ---- */

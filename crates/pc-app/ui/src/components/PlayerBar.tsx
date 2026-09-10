@@ -78,6 +78,7 @@ export function PlayerBar() {
   const setVolume = useStore((s) => s.setVolume);
   const toggleShuffle = useStore((s) => s.toggleShuffle);
   const cycleRepeat = useStore((s) => s.cycleRepeat);
+  const toggleMini = useStore((s) => s.toggleMini);
 
   const now = pb?.now ?? null;
   const dur = pb?.durationMs ?? null;
@@ -172,7 +173,12 @@ export function PlayerBar() {
             {pb.queuePos ?? "–"} / {pb.queueLen}
           </span>
         )}
-        <button className="tbtn toggle-underline" title="Compact mode" type="button" disabled>
+        <button
+          className="tbtn toggle-underline"
+          title="Compact mode (Ctrl+M)"
+          type="button"
+          onClick={() => void toggleMini()}
+        >
           <PictureInPicture2 />
         </button>
         <span className="vol">

@@ -6,11 +6,13 @@ import { PlayerBar } from "./components/PlayerBar";
 import { EmptyState } from "./components/EmptyState";
 import { ScanToast } from "./components/ScanToast";
 import { ContextMenuHost } from "./components/ContextMenu";
+import { MiniBar } from "./components/MiniBar";
 import { useStore } from "./store";
 
 export function App() {
   const ready = useStore((s) => s.ready);
   const root = useStore((s) => s.root);
+  const mini = useStore((s) => s.mini);
   const init = useStore((s) => s.init);
 
   useEffect(() => {
@@ -43,11 +45,27 @@ export function App() {
         case "R":
           void s.cycleRepeat();
           break;
+        case "m":
+        case "M":
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            void s.toggleMini();
+          }
+          break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  if (mini) {
+    return (
+      <div className="win mini-win">
+        <MiniBar />
+        <ContextMenuHost />
+      </div>
+    );
+  }
 
   return (
     <div className="win">
