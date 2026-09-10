@@ -320,8 +320,12 @@ mod tests {
 
         queue.set_shuffle(false);
         assert_eq!(queue.current(), Some(atual), "pulou de faixa ao desligar");
-        // De volta à ordem natural, o próximo é o vizinho de verdade.
-        assert_eq!(queue.peek_next(), Some(TrackId(atual.0 + 1)));
+        // De volta à ordem natural, o próximo é o vizinho de verdade — ou
+        // nada, se o `advance` embaralhado tiver parado justo na última
+        // faixa (sem repeat, não há próximo). O shuffle é semeado pelo
+        // relógio: sem esse caso, o teste falha ~1 em 50 execuções.
+        let esperado = (atual.0 + 1 < 50).then(|| TrackId(atual.0 + 1));
+        assert_eq!(queue.peek_next(), esperado);
     }
 
     #[test]
