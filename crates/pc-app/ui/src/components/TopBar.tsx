@@ -1,11 +1,10 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { appWindow } from "../lib/window";
 import { Folder, RefreshCw, Search, Minus, Square, X } from "./icons";
 
 /* Barra de comando — também é a barra de título (janela sem decoração):
    a área livre arrasta a janela (`data-tauri-drag-region`), e os botões à
    direita fazem minimizar / maximizar / fechar. */
 export function TopBar() {
-  const win = getCurrentWindow();
   return (
     <div className="topbar" data-tauri-drag-region>
       <button className="icobtn" title="Choose music folder" type="button">
@@ -22,18 +21,18 @@ export function TopBar() {
       </label>
 
       <div className="wbtns">
-        <button className="wbtn" title="Minimize" type="button" onClick={() => win.minimize()}>
+        <button className="wbtn" title="Minimize" type="button" onClick={() => appWindow.minimize()}>
           <Minus />
         </button>
         <button
           className="wbtn"
           title="Maximize"
           type="button"
-          onClick={() => win.toggleMaximize()}
+          onClick={() => appWindow.toggleMaximize()}
         >
           <Square />
         </button>
-        <button className="wbtn close" title="Close" type="button" onClick={() => win.close()}>
+        <button className="wbtn close" title="Close" type="button" onClick={() => appWindow.close()}>
           <X />
         </button>
       </div>
