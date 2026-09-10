@@ -1,69 +1,17 @@
-//! Player de música para PC.
+//! Player de música para PC — casca Tauri.
+//!
+//! A UI é web (`ui/`, React) servida pelo webview do SO; o Rust é o back:
+//! índice (`player-core`), áudio (`player-audio`) e a ponte de comandos.
+//! Migração de `egui` documentada em `../../design/` e no plano do branch
+//! `tauri-ui`.
 
-// Sem console no Windows quando o binário é aberto pelo explorador.
+// Sem console no Windows quando aberto pelo explorador.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod app;
-mod art;
-mod paths;
-mod queue;
-mod theme;
-mod watcher;
-
-use eframe::egui;
-
-/// A marca do Yasmine — arte fornecida pelo usuário, PNG único. Embutida no
-/// binário: é um ícone, não algo que o usuário troca, então não precisa
-/// viver solto no disco.
-fn load_icon() -> egui::IconData {
-    let bytes = include_bytes!("../assets/icon-256.png");
-    let image = image::load_from_memory(bytes)
-        .expect("assets/icon-256.png embutido no binário deveria ser válido")
-        .to_rgba8();
-    let (width, height) = image.dimensions();
-    egui::IconData {
-        rgba: image.into_raw(),
-        width,
-        height,
-    }
-}
-
-fn main() -> eframe::Result<()> {
-    // Argumentos da linha de comando: uma pasta (subir já apontado numa
-    // biblioteca) ou um ou mais arquivos (o "abrir com" do gerenciador de
-    // arquivos, inclusive com vários selecionados de uma vez — `app::Opened`
-    // decide qual dos dois casos é esse). Sem filtrar aqui: um caminho que
-    // não existe mais vira `Opened::Nothing` do mesmo jeito que nenhum
-    // argumento, sem precisar de um caso de erro à parte.
-    let args: Vec<std::path::PathBuf> = std::env::args_os().skip(1).map(Into::into).collect();
-
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1000.0, 660.0])
-            .with_min_inner_size(app::NORMAL_MIN_SIZE)
-            .with_title("Yasmine")
-            .with_icon(load_icon())
-            // Sem decoração do gerenciador de janelas: no Linux, cada
-            // ambiente desenha um cabeçalho diferente (cinza claro no
-            // XFCE, escuro em outros) que nada no app controla — colado
-            // direto num conteúdo quase preto, era a costura mais feia da
-            // janela inteira. A barra de comando (`app::App::top_bar`) vira
-            // a barra de título também: arrasta, dá duplo clique pra
-            // maximizar, tem os próprios botões de minimizar/maximizar/
-            // fechar, no mesmo traço do resto da interface.
-            .with_decorations(false),
-        // glow, não wgpu: o contexto sobe mais rápido e o binário carrega
-        // menos dependência. Aparece direto no tempo até a janela existir.
-        renderer: eframe::Renderer::Glow,
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "yasmine",
-        options,
-        Box::new(move |cc| match app::App::new(cc, &args) {
-            Ok(app) => Ok(Box::new(app) as Box<dyn eframe::App>),
-            Err(err) => Err(err.into()),
-        }),
-    )
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| Ok(()))
+        .run(tauri::generate_context!())
+        .expect("erro ao iniciar o Yasmine");
 }

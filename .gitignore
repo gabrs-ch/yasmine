@@ -4,3 +4,9 @@
 *.db-wal
 *.db-shm
 /testdata
+
+# frontend (Tauri UI)
+crates/pc-app/ui/node_modules
+crates/pc-app/ui/dist
+crates/pc-app/ui/*.tsbuildinfo
+crates/pc-app/gen/

@@ -1,0 +1,33 @@
+/* Fontes locais — embutidas no bundle, nunca de CDN (o app roda offline e o
+   CSP bloqueia font-src externo). Mesmos arquivos que o binário egui usava. */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/IBMPlexSans-Regular.ttf") format("truetype");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-weight: 500;
+  font-display: block;
+  src: url("../assets/fonts/IBMPlexSans-SemiBold.ttf") format("truetype");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-weight: 600;
+  font-display: block;
+  src: url("../assets/fonts/IBMPlexSans-SemiBold.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/JetBrainsMonoNL-Regular.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 500;
+  font-display: block;
+  src: url("../assets/fonts/JetBrainsMonoNL-Regular.ttf") format("truetype");
+}

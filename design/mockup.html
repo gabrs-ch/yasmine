@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Yasmine — redesign mockup</title>
+<!--
+  Fonte da verdade visual da UI do PC (branch tauri-ui). O CSS abaixo é o
+  que foi portado para crates/pc-app/ui/src/styles/. Abrir no navegador e
+  comparar lado a lado com `cargo tauri dev` durante a migração.
+  Fontes aqui vêm do Google Fonts só pro preview; no app são locais.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#08080a; --card:#121214; --elevated:#1c1c21; --hover:#212128;
+    --rule:#2a2a32; --text:#ececef; --dim:#a2a2ab; --faint:#6a6a74;
+    --accent:#7c5cff; --accent-bright:#9a82ff; --accent-dim:#5942b8;
+    --card-radius:12px; --sm-radius:6px;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
+    --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#050506;font-family:var(--sans);color:var(--text);
+    padding:28px 22px;display:flex;justify-content:center;-webkit-font-smoothing:antialiased}
+
+  .win{width:1080px;max-width:100%;background:var(--ground);border:1px solid var(--rule);
+    border-radius:8px;overflow:hidden;display:flex;flex-direction:column;
+    box-shadow:0 24px 70px -12px rgba(0,0,0,.7)}
+
+  /* ---- top bar ---- */
+  .topbar{height:44px;display:flex;align-items:center;gap:10px;padding:0 12px;flex:none}
+  .icobtn{width:28px;height:26px;display:flex;align-items:center;justify-content:center;
+    border-radius:var(--sm-radius);color:var(--dim);flex:none}
+  .icobtn:hover{background:var(--hover);color:var(--text)}
+  .icobtn svg{width:16px;height:16px}
+  .path{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
+  .search{flex:1;max-width:420px;margin:0 auto;height:30px;display:flex;align-items:center;gap:8px;
+    background:var(--elevated);border:1px solid transparent;border-radius:999px;padding:0 14px;color:var(--faint)}
+  .search:hover{border-color:var(--rule)}
+  .search svg{width:15px;height:15px;flex:none}
+  .search span{font-size:12.5px}
+  .wbtns{display:flex;align-items:center;gap:2px;margin-left:auto}
+  .wbtn{width:30px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:999px;color:var(--dim)}
+  .wbtn svg{width:13px;height:13px}
+  .wbtn:hover{background:var(--hover);color:var(--text)}
+  .wbtn.close:hover{background:#c43b3b;color:#fff}
+
+  /* ---- body: two floating cards ---- */
+  .body{flex:1;display:flex;gap:8px;padding:2px 8px 8px}
+  .card{background:var(--card);border-radius:var(--card-radius);overflow:hidden;display:flex;flex-direction:column}
+
+  /* ---- sidebar ---- */
+  .side{width:256px;flex:none}
+  .side-head{display:flex;align-items:center;justify-content:space-between;padding:16px 14px 10px}
+  .side-head h2{font-size:14px;font-weight:600;letter-spacing:.01em}
+  .side-head .icobtn{width:24px;height:24px}
+  .side-head .icobtn svg{width:14px;height:14px}
+  .chips{display:flex;gap:8px;padding:0 14px 12px}
+  .chip{font-size:11.5px;color:var(--dim);background:var(--elevated);border-radius:999px;padding:5px 12px}
+  .chip.on{color:#12121a;background:var(--text);font-weight:500}
+  .rows{flex:1;overflow-y:auto;padding:2px 6px 8px}
+  .row{display:flex;align-items:center;gap:11px;padding:7px 8px;border-radius:8px;cursor:default}
+  .row:hover{background:var(--hover)}
+  .row.on{background:var(--elevated)}
+  .thumb{width:44px;height:44px;border-radius:var(--sm-radius);flex:none;overflow:hidden;position:relative}
+  .thumb.round{border-radius:50%}
+  .thumb.grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+  .r-txt{min-width:0}
+  .r-name{font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row.on .r-name{color:var(--accent-bright)}
+  .r-sub{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .r-glyph{margin-left:auto;color:var(--faint)}
+  .r-glyph svg{width:14px;height:14px;display:block}
+  .side-sep{height:1px;background:var(--rule);margin:6px 14px}
+  .side-label{font-size:10.5px;letter-spacing:.14em;color:var(--faint);padding:10px 14px 6px;text-transform:uppercase}
+
+  /* ---- main ---- */
+  .main{flex:1;min-width:0}
+  .hero{display:flex;align-items:flex-end;gap:18px;padding:22px 22px 18px;
+    background:linear-gradient(160deg,#3b2d6d 0%,#241d3f 42%,var(--card) 100%)}
+  .hero-cover{width:88px;height:88px;border-radius:8px;flex:none;box-shadow:0 8px 26px -6px rgba(0,0,0,.6)}
+  .hero-meta .eyebrow{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+  .hero-meta h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:5px 0 8px;line-height:1.05}
+  .hero-meta .sub{font-size:12px;color:var(--dim)}
+  .hero-meta .sub b{color:var(--text);font-weight:500}
+
+  .listwrap{flex:1;display:flex;flex-direction:column;padding:6px 10px 10px}
+  .lhead{display:grid;grid-template-columns:30px 44px 1fr 1fr 1fr 60px;align-items:center;
+    gap:10px;padding:6px 12px;border-bottom:1px solid var(--rule)}
+  .lhead span{font-size:10px;letter-spacing:.13em;color:var(--faint);text-transform:uppercase}
+  .lhead .r{text-align:right}
+  .track{display:grid;grid-template-columns:30px 44px 1fr 1fr 1fr 60px;align-items:center;gap:10px;
+    padding:0 12px;height:46px;border-radius:8px;position:relative;cursor:default}
+  .track:hover{background:var(--hover)}
+  .track .num{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .track .ca{width:34px;height:34px;border-radius:5px}
+  .track .tt{font-size:13.5px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .track .ar,.track .al{font-size:12.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .track .du{font-family:var(--mono);font-size:12px;color:var(--faint);text-align:right}
+  .track.playing::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;
+    border-radius:0;background:var(--accent)}
+  .track.playing .tt{color:var(--accent-bright)}
+  .track.playing .num .eq{color:var(--accent-bright)}
+  .eq{display:flex;align-items:flex-end;gap:2px;height:13px}
+  .eq i{width:2.5px;background:var(--accent-bright);border-radius:1px}
+  .eq i:nth-child(1){height:40%}.eq i:nth-child(2){height:100%}.eq i:nth-child(3){height:65%}
+  @media (prefers-reduced-motion:no-preference){
+    .eq i{animation:eq .9s ease-in-out infinite alternate}
+    .eq i:nth-child(2){animation-delay:.15s}.eq i:nth-child(3){animation-delay:.3s}
+    @keyframes eq{from{height:25%}to{height:100%}}
+  }
+
+  /* ---- player bar ---- */
+  .player{height:90px;flex:none;display:flex;align-items:center;gap:14px;
+    padding:0 18px;background:var(--ground);border-top:1px solid rgba(255,255,255,.06)}
+  .np{display:flex;align-items:center;gap:12px;width:300px;flex:none}
+  .np-cover{width:56px;height:56px;border-radius:8px;flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+  .np-txt{min-width:0}
+  .np-title{font-size:13.5px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .np-sub{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  .center{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px}
+  .transport{display:flex;align-items:center;gap:18px}
+  .tbtn{color:var(--dim);display:flex}
+  .tbtn:hover{color:var(--text)}
+  .tbtn svg{width:17px;height:17px}
+  .tbtn.on{color:var(--text)}
+  .playbtn{width:34px;height:34px;border-radius:50%;background:var(--text);color:#0b0b0f;
+    display:flex;align-items:center;justify-content:center}
+  .playbtn svg{width:15px;height:15px}
+  .toggle-underline{position:relative}
+  .toggle-underline.on::after{content:"";position:absolute;left:3px;right:3px;bottom:-4px;height:1px;background:var(--text)}
+  .bar{display:flex;align-items:center;gap:10px;width:min(520px,60%)}
+  .time{font-family:var(--mono);font-size:11px;color:var(--faint);flex:none}
+  .track-line{flex:1;height:4px;border-radius:999px;background:var(--rule);position:relative}
+  .track-fill{position:absolute;left:0;top:0;bottom:0;width:34%;border-radius:999px;
+    background:linear-gradient(90deg,var(--accent-dim),var(--accent-bright))}
+  .track-knob{position:absolute;left:34%;top:50%;width:10px;height:10px;border-radius:50%;
+    background:var(--accent-bright);transform:translate(-50%,-50%)}
+  .right{width:210px;flex:none;display:flex;align-items:center;justify-content:flex-end;gap:14px}
+  .vol{display:flex;align-items:center;gap:8px}
+  .vol svg{width:16px;height:16px;color:var(--dim)}
+  .vol-line{width:64px;height:4px;border-radius:999px;background:var(--rule);position:relative}
+  .vol-fill{position:absolute;left:0;top:0;bottom:0;width:70%;border-radius:999px;background:linear-gradient(90deg,var(--faint),var(--dim))}
+  .qcount{font-family:var(--mono);font-size:11px;color:var(--faint)}
+
+  /* fake covers */
+  .a1{background:linear-gradient(135deg,#7c5cff,#3a1f8c)}
+  .a2{background:linear-gradient(135deg,#1f6f5c,#0b3b3f)}
+  .a3{background:linear-gradient(135deg,#b8422f,#5a1f1f)}
+  .a4{background:linear-gradient(135deg,#2d5fb8,#12244f)}
+  .a5{background:linear-gradient(135deg,#c24d7e,#4b1528)}
+  .a6{background:linear-gradient(135deg,#d79a2a,#5a3806)}
+  .a7{background:linear-gradient(135deg,#4b4f57,#1b1d22)}
+  .a8{background:linear-gradient(135deg,#5942b8,#241d3f)}
+  .lib{background:linear-gradient(135deg,var(--accent-bright),var(--accent-dim));
+    display:flex;align-items:center;justify-content:center;color:#fff}
+  .lib svg{width:20px;height:20px}
+</style>
+</head>
+<body>
+
+<div class="win">
+
+  <div class="topbar">
+    <div class="icobtn" title="Choose music folder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+    </div>
+    <div class="path">~/Music/Library</div>
+    <div class="icobtn" title="Rescan folder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+    </div>
+
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <span>Search your library</span>
+    </div>
+
+    <div class="wbtns">
+      <div class="wbtn" title="Minimize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg></div>
+      <div class="wbtn" title="Maximize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></div>
+      <div class="wbtn close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></div>
+    </div>
+  </div>
+
+  <div class="body">
+
+    <aside class="card side">
+      <div class="side-head">
+        <h2>Your Library</h2>
+        <div class="icobtn" title="New playlist">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </div>
+      </div>
+      <div class="rows">
+        <div class="row on">
+          <div class="thumb lib">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg>
+          </div>
+          <div class="r-txt"><div class="r-name">Your Library</div><div class="r-sub">3,184 tracks · 291 albums</div></div>
+        </div>
+
+        <div class="side-label">Playlists</div>
+
+        <div class="row">
+          <div class="thumb a3"></div>
+          <div class="r-txt"><div class="r-name">Late Night Drive</div><div class="r-sub">Playlist · 42 tracks</div></div>
+        </div>
+        <div class="row">
+          <div class="thumb grid"><div class="a1"></div><div class="a6"></div><div class="a4"></div><div class="a2"></div></div>
+          <div class="r-txt"><div class="r-name">Focus Mix</div><div class="r-sub">Playlist · 68 tracks · linked folder</div></div>
+        </div>
+        <div class="row">
+          <div class="thumb a5"></div>
+          <div class="r-txt"><div class="r-name">wildlands</div><div class="r-sub">Playlist · 25 tracks</div></div>
+        </div>
+        <div class="row">
+          <div class="thumb a8"></div>
+          <div class="r-txt"><div class="r-name">I've been for a walking</div><div class="r-sub">Playlist · 17 tracks</div></div>
+        </div>
+        <div class="row">
+          <div class="thumb a7"></div>
+          <div class="r-txt"><div class="r-name">Rainy Sunday</div><div class="r-sub">Playlist · 31 tracks</div></div>
+        </div>
+
+        <div class="side-sep"></div>
+        <div class="side-label">Artist filter</div>
+        <div class="row">
+          <div class="thumb round a4"></div>
+          <div class="r-txt"><div class="r-name">The Weeknd</div><div class="r-sub">Artist · 54 tracks</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="card main">
+      <div class="hero">
+        <div class="hero-cover a3"></div>
+        <div class="hero-meta">
+          <div class="eyebrow">Playlist</div>
+          <h1>Late Night Drive</h1>
+          <div class="sub"><b>Gabriel</b> · 42 tracks · 2 hr 51 min</div>
+        </div>
+      </div>
+
+      <div class="listwrap">
+        <div class="lhead">
+          <span>#</span><span></span><span>Title</span><span>Artist</span><span>Album</span><span class="r">Time</span>
+        </div>
+
+        <div class="track"><div class="num">1</div><div class="ca a4"></div><div class="tt">Blinding Lights</div><div class="ar">The Weeknd</div><div class="al">After Hours</div><div class="du">3:20</div></div>
+        <div class="track"><div class="num">2</div><div class="ca a8"></div><div class="tt">Runaway</div><div class="ar">AURORA</div><div class="al">All My Demons Greeting Me…</div><div class="du">4:03</div></div>
+        <div class="track"><div class="num">3</div><div class="ca a3"></div><div class="tt">Máquina do Tempo</div><div class="ar">Matuê</div><div class="al">Máquina do Tempo</div><div class="du">3:47</div></div>
+
+        <div class="track playing">
+          <div class="num" style="display:flex;align-items:center"><span class="eq"><i></i><i></i><i></i></span></div>
+          <div class="ca a5"></div>
+          <div class="tt">Have You Seen Me Dance Alone?</div>
+          <div class="ar">TOMORA, AURORA</div>
+          <div class="al">HAVE YOU SEEN ME DANCE ALONE?</div>
+          <div class="du">4:21</div>
+        </div>
+
+        <div class="track"><div class="num">5</div><div class="ca a1"></div><div class="tt">Nightcall</div><div class="ar">Kavinsky</div><div class="al">OutRun</div><div class="du">4:18</div></div>
+        <div class="track"><div class="num">6</div><div class="ca a2"></div><div class="tt">The Stage</div><div class="ar">Avenged Sevenfold</div><div class="al">The Stage</div><div class="du">8:32</div></div>
+        <div class="track"><div class="num">7</div><div class="ca a6"></div><div class="tt">Redbone</div><div class="ar">Childish Gambino</div><div class="al">Awaken, My Love!</div><div class="du">5:27</div></div>
+        <div class="track"><div class="num">8</div><div class="ca a7"></div><div class="tt">Instant Crush</div><div class="ar">Daft Punk, Julian Casablancas</div><div class="al">Random Access Memories</div><div class="du">5:37</div></div>
+        <div class="track"><div class="num">9</div><div class="ca a4"></div><div class="tt">Out of Time</div><div class="ar">The Weeknd</div><div class="al">Dawn FM</div><div class="du">3:34</div></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="player">
+    <div class="np">
+      <div class="np-cover a5"></div>
+      <div class="np-txt">
+        <div class="np-title">Have You Seen Me Dance Alone?</div>
+        <div class="np-sub">TOMORA, AURORA · HAVE YOU SEEN ME DANCE ALONE?</div>
+      </div>
+    </div>
+
+    <div class="center">
+      <div class="transport">
+        <span class="tbtn toggle-underline on" title="Shuffle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
+        </span>
+        <span class="tbtn" title="Previous">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14H5V5h2Zm12 0v14l-11-7 11-7Z"/></svg>
+        </span>
+        <span class="playbtn" title="Pause">
+          <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+        </span>
+        <span class="tbtn" title="Next">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 5v14h2V5h-2ZM5 5v14l11-7L5 5Z"/></svg>
+        </span>
+        <span class="tbtn toggle-underline on" title="Repeat: all">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+        </span>
+      </div>
+      <div class="bar">
+        <span class="time">2:04</span>
+        <span class="track-line"><span class="track-fill"></span><span class="track-knob"></span></span>
+        <span class="time">4:21</span>
+      </div>
+    </div>
+
+    <div class="right">
+      <span class="qcount">4 / 42</span>
+      <span class="tbtn toggle-underline" title="Compact mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10h6V4"/><path d="m2 4 6 6"/><path d="M21 10V7a2 2 0 0 0-2-2h-9"/><path d="M3 14v3a2 2 0 0 0 2 2h6"/><rect x="13" y="14" width="9" height="7" rx="1"/></svg>
+      </span>
+      <span class="vol">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M16 9a3 3 0 0 1 0 6"/><path d="M19.5 6.5a7 7 0 0 1 0 11"/></svg>
+        <span class="vol-line"><span class="vol-fill"></span></span>
+      </span>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
