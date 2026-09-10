@@ -8,13 +8,17 @@ aponta o outro device.
 
 **[github.com/gabrs-ch/yasmine/releases/latest](https://github.com/gabrs-ch/yasmine/releases/latest)**
 
-- **Windows**: baixe o `Yasmine_*-setup.exe` e rode. Instala só pro usuário
-  atual (sem admin) e registra o "Abrir com" pros formatos de áudio. O
-  Windows pode avisar "O Windows protegeu seu PC" na primeira vez (não é
-  assinado) — "Mais informações" → "Executar assim mesmo". A interface usa
-  o **WebView2**, que o Windows 11 já traz; nas máquinas sem ele o
-  instalador baixa e adiciona na hora (precisa de internet nessa primeira
-  instalação).
+- **Windows**: duas opções.
+  - `Yasmine_*_windows_portable.zip` — extraia e dê duplo clique no
+    `yasmine.exe`. Portátil, não instala nada; apagar é apagar a pasta.
+  - `Yasmine_*-setup.exe` — instala só pro usuário atual (sem admin) e
+    registra o "Abrir com" pros formatos de áudio.
+
+  O Windows pode avisar "O Windows protegeu seu PC" na primeira vez (não é
+  assinado) — "Mais informações" → "Executar assim mesmo". A interface usa o
+  **WebView2**, que o Windows 11 já traz; nas raras máquinas sem ele o
+  `setup.exe` baixa e adiciona na hora (o `.zip` portátil só roda se o
+  WebView2 já estiver presente).
 - **Linux**: baixe o `Yasmine_*.AppImage`, `chmod +x` e rode — um arquivo
   só, portátil, sem root; apagar é apagar o arquivo. Já traz o **WebKitGTK**
   embutido, então não depende do que a distro tem. Quem prefere pacote
@@ -66,10 +70,19 @@ O binário final chama-se `yasmine`; os crates internos mantêm o prefixo
 
 ## Decisões fechadas
 
-**`egui`/`eframe` com backend `glow`, não `wgpu`.** Criar o contexto GL é mais
-rápido e traz menos dependência — aparece direto no cold start. Vêm junto:
-repaint reativo (só em evento) e, tocando, repaint limitado a ~4 Hz. O padrão
-de redesenhar a 60 fps é metade do custo de CPU de um player parado.
+**UI em Tauri 2 (webview do SO) + front web, não `egui`.** A primeira versão
+foi `egui`/`eframe`: um binário, zero dependência de runtime, cold start
+rápido. Mas o teto visual do modo imediato é baixo pra este trabalho —
+`letter-spacing`, transição/animação, gradiente livre, layout que centra de
+verdade, AA de texto. O Tauri renderiza o front (React/TS em
+[`crates/pc-app/ui`](crates/pc-app/ui)) no webview que o SO já traz
+(WebKitGTK no Linux, WebView2 no Windows), então CSS de verdade e o mockup
+vira código. Custo assumido: +RAM (~50 → ~150 MB), cold start mais lento, e a
+dependência de runtime — no Linux o AppImage a embute (81 MB, um arquivo só,
+sem root, como antes); no Windows o WebView2 já vem no Win11 e o instalador
+adiciona se faltar. O core (`player-core`, `player-audio`, `player-sync`) e o
+app Android não mudaram. Histórico e plano da migração em
+[`design/`](design/).
 
 **`cpal` + `symphonia` direto, sem `rodio`.** O rodio reamostra sempre que a
 taxa do device não bate com a do arquivo, com interpolação linear. Indo direto
@@ -117,11 +130,10 @@ autoincrement local: o mesmo arquivo tem id diferente em cada device. Um item
 sem faixa local correspondente vira buraco na lista, não desaparece — é a
 faixa que ainda não chegou por sync.
 
-**Sem ícone de bandeja no Linux.** `tray-icon` (a opção óbvia em Rust) puxa
-GTK3 no Linux via `libxdo`/`gtk`, contra a decisão de manter o binário
-enxuto. Existe `ksni` (implementação pura em D-Bus, sem GTK) como alternativa
-mais tarde; por ora, o modo compacto (`Ctrl+M`) cobre o caso de uso de "ficar
-tocando ocupando pouco espaço" sem a dependência.
+**Sem ícone de bandeja.** Por ora o modo compacto (`Ctrl+M` / botão pip) —
+janela encolhida a uma barrinha, sempre no topo — cobre o caso de "ficar
+tocando ocupando pouco espaço". Bandeja de verdade (Tauri tem API pronta) só
+se aparecer necessidade.
 
 **Nivelador de volume por RMS, não EBU R128/ReplayGain de verdade.** A medida
 "correta" de volume percebido usa filtro de ponderação-K e gating de trechos

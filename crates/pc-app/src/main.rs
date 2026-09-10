@@ -18,6 +18,7 @@ mod playback;
 mod queue;
 mod scan;
 mod state;
+mod watcher;
 
 use std::path::PathBuf;
 use std::sync::Mutex;

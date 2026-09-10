@@ -65,6 +65,27 @@ pub fn spawn(app: AppHandle) {
                 let dto = {
                     let mut st = state.lock().expect("estado do app");
                     st.pump_audio();
+
+                    // Mexeram na pasta de música: dispara um rescan (o
+                    // watcher já espera a rajada acabar antes de sinalizar).
+                    if st
+                        .watcher
+                        .as_ref()
+                        .is_some_and(crate::watcher::Watcher::take_change)
+                    {
+                        crate::scan::spawn(
+                            app.clone(),
+                            st.paths.db.clone(),
+                            st.paths.cache.clone(),
+                            st.watcher
+                                .as_ref()
+                                .expect("checado acima")
+                                .root()
+                                .to_path_buf(),
+                            std::sync::Arc::clone(&st.loudness_running),
+                        );
+                    }
+
                     snapshot(&st)
                 };
                 if dto.playing || last.as_ref() != Some(&dto) {

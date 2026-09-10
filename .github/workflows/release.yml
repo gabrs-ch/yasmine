@@ -61,6 +61,12 @@ jobs:
           find target/release/bundle -type f \
             \( -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) \
             -exec cp {} dist/ \;
+          # Windows: além do instalador NSIS, um .zip portátil com o .exe
+          # cru — extrair e rodar, sem instalar (usa o WebView2 do sistema).
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "dist/Yasmine_${GITHUB_REF_NAME#v}_windows_portable.zip" \
+              ./target/release/yasmine.exe
+          fi
           ls -la dist
 
       - uses: actions/upload-artifact@v4

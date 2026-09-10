@@ -18,6 +18,7 @@ use crate::hexhash;
 use crate::paths::Paths;
 use crate::queue::Queue;
 use crate::scan;
+use crate::watcher::Watcher;
 
 pub const META_ROOT: &str = "library_root";
 pub const META_VOLUME: &str = "volume";
@@ -71,6 +72,10 @@ pub struct AppState {
     /// de virarem faixa e tocarem.
     pub pending_play: Vec<PathBuf>,
 
+    /// Vigia a pasta de música — o loop de `playback.rs` consulta
+    /// `take_change()` e dispara um rescan quando algo mexe no disco.
+    pub watcher: Option<Watcher>,
+
     /// Guarda do nivelador de loudness — passada pro `scan::spawn`, que
     /// dispara o preenchimento depois de cada scan sem empilhar tarefas.
     pub loudness_running: Arc<AtomicBool>,
@@ -113,6 +118,7 @@ impl AppState {
             now_id: None,
             now: None,
             pending_play: Vec::new(),
+            watcher: None,
             loudness_running: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -133,7 +139,6 @@ impl AppState {
             (META_ROOT, folder.to_string_lossy()),
         );
         let _ = player_core::keep_only_root(&self.db, &folder);
-        self.root = Some(folder.clone());
         self.engine.stop();
         self.queue.clear();
         self.now_id = None;
@@ -142,9 +147,13 @@ impl AppState {
             app.clone(),
             self.paths.db.clone(),
             self.paths.cache.clone(),
-            folder,
+            folder.clone(),
             Arc::clone(&self.loudness_running),
         );
+        // Vigia a pasta a partir de agora; o `wake` fica vazio porque quem
+        // dispara o rescan é o loop de `playback.rs`, consultando o watcher.
+        self.watcher = Watcher::new(&folder, || {}).ok();
+        self.root = Some(folder);
     }
 
     // ---- playback ----------------------------------------------------------
