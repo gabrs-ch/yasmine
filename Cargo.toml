@@ -49,9 +49,13 @@ unwrap_used = "warn"
 
 # Release: otimizado pra binário pequeno e start rápido.
 # LTO fat + 1 codegen unit custa tempo de build, não de execução.
+# Release: otimizado, mas `lto = "thin"` em vez de `fat` — com o webview no
+# meio, o gargalo de start/tamanho é o WebKitGTK, não o binário Rust, e o
+# `fat` fazia o link do `player-pc` (todo o Tauri/wry junto) levar dezenas de
+# minutos no CI de 2 núcleos. `thin` pega ~95% do ganho a uma fração do tempo.
 [profile.release]
 opt-level = 3
-lto = "fat"
+lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"

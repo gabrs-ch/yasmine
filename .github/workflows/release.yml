@@ -1,8 +1,8 @@
 name: Release
 
-# Dispara em tag `v*` (ex. v0.5.0) — cada tag vira uma versão baixável.
-# O CI comum (ci.yml) garante que builda e passa nos testes a cada push;
-# este workflow empacota AppImage/.deb (Linux) e o setup NSIS (Windows).
+# Dispara em tag `v*` (ex. v0.5.2). O CI comum (ci.yml) já garante que builda
+# e passa nos testes; este workflow empacota AppImage/.deb/.rpm (Linux) e o
+# setup NSIS (Windows) e publica na release da tag.
 on:
   push:
     tags:
@@ -22,10 +22,18 @@ jobs:
           - os: windows-latest
             bundles: nsis
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: ". -> target"
+      # binário pronto do cargo-tauri — não compila os ~200 crates do CLI.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -39,17 +47,10 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
             librsvg2-dev libssl-dev
 
-      - name: tauri-cli
-        run: cargo install tauri-cli --version "^2.0" --locked
-
       - name: Instala o frontend
         working-directory: crates/pc-app/ui
         run: npm ci
 
-      # `cargo tauri build` roda o beforeBuildCommand (npm run build) e
-      # empacota. No Linux o AppImage sai auto-contido (o próprio bundler
-      # copia o WebKitGTK pra dentro). No Windows o WebView2 é baixado na
-      # instalação se faltar (Win11 já tem).
       - name: Empacota
         working-directory: crates/pc-app
         run: cargo tauri build --bundles ${{ matrix.bundles }}
@@ -61,11 +62,8 @@ jobs:
           find target/release/bundle -type f \
             \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*-setup.exe' \) \
             -exec cp {} dist/ \;
-          # Windows: além do instalador NSIS, um .zip portátil com o .exe
-          # cru — extrair e rodar, sem instalar (usa o WebView2 do sistema).
           if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a "dist/Yasmine_${GITHUB_REF_NAME#v}_windows_portable.zip" \
-              ./target/release/yasmine.exe
+            7z a "dist/Yasmine_${GITHUB_REF_NAME#v}_windows_portable.zip" ./target/release/yasmine.exe
           fi
           ls -la dist
 
@@ -73,9 +71,12 @@ jobs:
         with:
           name: yasmine-${{ runner.os }}
           path: dist/*
+          if-no-files-found: warn
 
   release:
     needs: bundle
+    # Publica o que subiu mesmo se um dos jobs de bundle falhar (ex. Windows).
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -84,8 +85,10 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - run: ls -R artifacts || true
       - name: Publica a release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
+          files: artifacts/**/*
+          fail_on_unmatched_files: false
           generate_release_notes: true
