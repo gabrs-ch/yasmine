@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "deb", "nsis"],
+    "targets": ["deb", "rpm", "appimage", "nsis"],
     "category": "Music",
     "shortDescription": "Local music player with direct LAN sync.",
     "longDescription": "Yasmine plays your local music library and syncs playlists directly between your devices over the LAN — no account, no cloud, no server. Point it at a folder; to sync, point it at the other device.",

@@ -18,7 +18,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            bundles: appimage,deb
+            bundles: deb,rpm,appimage
           - os: windows-latest
             bundles: nsis
     runs-on: ${{ matrix.os }}
@@ -59,7 +59,7 @@ jobs:
         run: |
           mkdir dist
           find target/release/bundle -type f \
-            \( -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) \
+            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*-setup.exe' \) \
             -exec cp {} dist/ \;
           # Windows: além do instalador NSIS, um .zip portátil com o .exe
           # cru — extrair e rodar, sem instalar (usa o WebView2 do sistema).

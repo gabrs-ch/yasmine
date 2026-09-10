@@ -19,17 +19,21 @@ aponta o outro device.
   **WebView2**, que o Windows 11 já traz; nas raras máquinas sem ele o
   `setup.exe` baixa e adiciona na hora (o `.zip` portátil só roda se o
   WebView2 já estiver presente).
-- **Linux**: baixe o `Yasmine_*.AppImage`, `chmod +x` e rode — um arquivo
-  só, portátil, sem root; apagar é apagar o arquivo. Já traz o **WebKitGTK**
-  embutido, então não depende do que a distro tem. Quem prefere pacote
-  nativo: o `.deb` (Debian/Ubuntu) declara a dependência e o apt resolve.
+- **Linux**: o pacote nativo é o caminho confiável — usa o **WebKitGTK** da
+  própria distro (o gerenciador resolve a dependência) e o "Abrir com" já
+  vem configurado.
+  - Debian/Ubuntu/Mint/Pop: `sudo apt install ./Yasmine_*_amd64.deb`
+  - Fedora/Nobara/RHEL/openSUSE: `sudo dnf install ./Yasmine-*.x86_64.rpm`
+  - `Yasmine_*.AppImage` (um arquivo só, sem root) também existe, com o
+    WebKitGTK embutido — mas a mistura de libs empacotadas com as do host
+    faz o `WebKitWebProcess` abortar em distros fora da família Ubuntu
+    (visto no Fedora 44). Se acontecer, use o `.deb`/`.rpm`.
 
 A única coisa que fica no sistema é a pasta de dados do player (índice da
 biblioteca e cache de capa, nos diretórios padrão).
 
-O "Abrir com" do gerenciador de arquivos já vem configurado pelo instalador
-(`.AppImage`/`.deb`/`setup.exe`): abrir um ou vários arquivos de áudio de
-uma vez aponta a biblioteca pra pasta deles e toca a partir do primeiro.
+O "Abrir com" do gerenciador de arquivos abre um ou vários arquivos de áudio
+de uma vez, aponta a biblioteca pra pasta deles e toca a partir do primeiro.
 
 ### Compilar você mesmo
 
