@@ -61,6 +61,20 @@ export interface ScanDone {
   elapsedS: number;
 }
 
+export type RepeatMode = "off" | "all" | "one";
+
+export interface Playback {
+  playing: boolean;
+  positionMs: number;
+  durationMs: number | null;
+  now: TrackRow | null;
+  queuePos: number | null;
+  queueLen: number;
+  shuffle: boolean;
+  repeat: RepeatMode;
+  volume: number;
+}
+
 export const api = {
   stats: () => invoke<Stats>("library_stats"),
   currentRoot: () => invoke<string | null>("current_root"),
@@ -72,6 +86,16 @@ export const api = {
     invoke<OpenResult>("open_source", { source, sort, query }),
   trackRows: (start: number, count: number) =>
     invoke<TrackRow[]>("track_rows", { start, count }),
+
+  playAt: (index: number) => invoke<Playback>("play_at", { index }),
+  playPause: () => invoke<Playback>("play_pause"),
+  nextTrack: () => invoke<Playback>("next_track"),
+  prevTrack: () => invoke<Playback>("prev_track"),
+  seek: (ms: number) => invoke<Playback>("seek", { ms }),
+  setVolume: (volume: number) => invoke<void>("set_volume", { volume }),
+  setShuffle: (on: boolean) => invoke<Playback>("set_shuffle", { on }),
+  cycleRepeat: () => invoke<Playback>("cycle_repeat"),
+  playbackSnapshot: () => invoke<Playback>("playback_snapshot"),
 };
 
 export const onScanProgress = (cb: (p: ScanProgress) => void): Promise<UnlistenFn> =>
@@ -80,6 +104,8 @@ export const onScanDone = (cb: (d: ScanDone) => void): Promise<UnlistenFn> =>
   listen<ScanDone>("scan://done", (e) => cb(e.payload));
 export const onScanError = (cb: (msg: string) => void): Promise<UnlistenFn> =>
   listen<string>("scan://error", (e) => cb(e.payload));
+export const onPlaybackState = (cb: (p: Playback) => void): Promise<UnlistenFn> =>
+  listen<Playback>("playback://state", (e) => cb(e.payload));
 
 /** URL da miniatura pro `<img>`. O esquema custom muda de forma por plataforma. */
 export function artUrl(hash: string, size: 96 | 512): string {

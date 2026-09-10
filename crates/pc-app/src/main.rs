@@ -12,7 +12,10 @@ mod art_protocol;
 mod commands;
 mod dto;
 mod hexhash;
+mod loudness;
 mod paths;
+mod playback;
+mod queue;
 mod scan;
 mod state;
 
@@ -35,6 +38,8 @@ fn main() {
         .manage(Mutex::new(app_state))
         .register_uri_scheme_protocol("art", art_protocol::handler(cache_dir))
         .setup(|app| {
+            let handle = app.handle().clone();
+
             // Um argumento de pasta na linha de comando aponta a biblioteca
             // já na subida (atalho, `cargo tauri dev -- <pasta>`, e a base do
             // "abrir com" da Fase 4). Arquivos soltos: Fase 4.
@@ -43,12 +48,15 @@ fn main() {
                 .map(PathBuf::from)
                 .find(|p| p.is_dir())
             {
-                let handle = app.handle().clone();
                 app.state::<Mutex<AppState>>()
                     .lock()
                     .expect("estado do app")
                     .set_root(&handle, dir);
             }
+
+            // Loop que bombeia os eventos do motor de áudio e transmite o
+            // `playback://state`.
+            playback::spawn(handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -60,6 +68,15 @@ fn main() {
             commands::track_rows,
             commands::pick_folder,
             commands::rescan,
+            commands::play_at,
+            commands::play_pause,
+            commands::next_track,
+            commands::prev_track,
+            commands::seek,
+            commands::set_volume,
+            commands::set_shuffle,
+            commands::cycle_repeat,
+            commands::playback_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Yasmine");

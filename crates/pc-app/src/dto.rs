@@ -54,7 +54,7 @@ impl From<Stats> for StatsDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackRowDto {
     pub id: i64,

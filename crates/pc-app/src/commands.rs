@@ -18,6 +18,7 @@ use crate::dto::{
     self, ArtistDto, OpenResult, PlaylistDto, SortArg, SourceArg, StatsDto, TrackRowDto,
 };
 use crate::hexhash;
+use crate::playback::{self, PlaybackDto};
 use crate::scan;
 use crate::state::{AppState, Source};
 
@@ -177,14 +178,86 @@ pub async fn pick_folder(app: AppHandle, state: St<'_>) -> Result<Option<String>
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
+// ---- playback ---------------------------------------------------------------
+
+/// Toca a faixa no índice `index` da view atual (substitui a fila por ela).
+#[tauri::command]
+pub fn play_at(state: St<'_>, index: usize) -> Result<PlaybackDto, String> {
+    let mut st = state.lock().expect("estado do app");
+    st.play_at(index)?;
+    Ok(playback::snapshot(&st))
+}
+
+#[tauri::command]
+pub fn play_pause(state: St<'_>) -> Result<PlaybackDto, String> {
+    let mut st = state.lock().expect("estado do app");
+    st.toggle_play()?;
+    Ok(playback::snapshot(&st))
+}
+
+#[tauri::command]
+pub fn next_track(state: St<'_>) -> Result<PlaybackDto, String> {
+    let mut st = state.lock().expect("estado do app");
+    st.next_track()?;
+    Ok(playback::snapshot(&st))
+}
+
+#[tauri::command]
+pub fn prev_track(state: St<'_>) -> Result<PlaybackDto, String> {
+    let mut st = state.lock().expect("estado do app");
+    st.prev_track()?;
+    Ok(playback::snapshot(&st))
+}
+
+#[tauri::command]
+pub fn seek(state: St<'_>, ms: u64) -> PlaybackDto {
+    let st = state.lock().expect("estado do app");
+    st.engine.seek(std::time::Duration::from_millis(ms));
+    playback::snapshot(&st)
+}
+
+#[tauri::command]
+pub fn set_volume(state: St<'_>, volume: f32) {
+    state.lock().expect("estado do app").set_volume(volume);
+}
+
+#[tauri::command]
+pub fn set_shuffle(state: St<'_>, on: bool) -> PlaybackDto {
+    let mut st = state.lock().expect("estado do app");
+    st.queue.set_shuffle(on);
+    st.queue_next();
+    playback::snapshot(&st)
+}
+
+/// Cicla o modo de repetição: desligado → tudo → uma → desligado.
+#[tauri::command]
+pub fn cycle_repeat(state: St<'_>) -> PlaybackDto {
+    let mut st = state.lock().expect("estado do app");
+    let next = st.queue.repeat().next();
+    st.queue.set_repeat(next);
+    st.queue_next();
+    playback::snapshot(&st)
+}
+
+/// Estado de reprodução agora — pra hidratar o front na subida.
+#[tauri::command]
+pub fn playback_snapshot(state: St<'_>) -> PlaybackDto {
+    playback::snapshot(&state.lock().expect("estado do app"))
+}
+
 /// Reindexação manual da pasta atual.
 #[tauri::command]
 pub fn rescan(app: AppHandle, state: St<'_>) -> Result<(), String> {
-    let (db_path, cache, root) = {
+    let (db_path, cache, root, guard) = {
         let st = state.lock().expect("estado do app");
         let root = st.root.clone().ok_or("nenhuma pasta escolhida")?;
-        (st.paths.db.clone(), st.paths.cache.clone(), root)
+        (
+            st.paths.db.clone(),
+            st.paths.cache.clone(),
+            root,
+            std::sync::Arc::clone(&st.loudness_running),
+        )
     };
-    scan::spawn(app, db_path, cache, root);
+    scan::spawn(app, db_path, cache, root, guard);
     Ok(())
 }

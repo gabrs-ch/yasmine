@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { api, artUrl, type TrackRow } from "../lib/api";
 import { useStore } from "../store";
 import { coverClass } from "./Thumb";
+import { Equalizer } from "./icons";
 
 const ROW_H = 46;
 
@@ -16,6 +17,8 @@ function fmtDur(ms: number | null): string {
 export function MainPane() {
   const open = useStore((s) => s.open);
   const total = useStore((s) => s.total);
+  const nowId = useStore((s) => s.playback?.now?.id ?? null);
+  const playAt = useStore((s) => s.playAt);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<Map<number, TrackRow>>(new Map());
@@ -120,9 +123,17 @@ export function MainPane() {
                   </div>
                 );
               }
+              const playing = nowId != null && row.id === nowId;
               return (
-                <div className="track" style={style} key={vi.key}>
-                  <div className="num">{row.trackNo ?? vi.index + 1}</div>
+                <div
+                  className={`track${playing ? " playing" : ""}`}
+                  style={style}
+                  key={vi.key}
+                  onDoubleClick={() => void playAt(vi.index)}
+                >
+                  <div className="num" style={playing ? { display: "flex", alignItems: "center" } : undefined}>
+                    {playing ? <Equalizer /> : (row.trackNo ?? vi.index + 1)}
+                  </div>
                   <div className={`ca ${coverClass(row.art ?? String(row.id))}`}>
                     {row.art && (
                       <img

@@ -13,6 +13,8 @@ use tauri::{AppHandle, Emitter};
 use player_core::scan::scan_with_progress;
 use player_core::{ArtCache, Db};
 
+use crate::loudness;
+
 #[derive(Clone, Serialize)]
 struct Progress {
     /// Arquivos processados até agora (o total só é conhecido no meio do
@@ -30,7 +32,13 @@ struct Done {
     elapsed_s: f64,
 }
 
-pub fn spawn(app: AppHandle, db_path: PathBuf, cache: PathBuf, root: PathBuf) {
+pub fn spawn(
+    app: AppHandle,
+    db_path: PathBuf,
+    cache: PathBuf,
+    root: PathBuf,
+    loudness_running: Arc<AtomicBool>,
+) {
     let _ = std::thread::Builder::new()
         .name("scan".into())
         .spawn(move || {
@@ -82,6 +90,9 @@ pub fn spawn(app: AppHandle, db_path: PathBuf, cache: PathBuf, root: PathBuf) {
                             elapsed_s: started.elapsed().as_secs_f64(),
                         },
                     );
+                    // O índice está pronto; o ganho de loudness enche depois,
+                    // sem segurar o `scan://done`.
+                    loudness::spawn_fill(db_path, loudness_running);
                 }
                 Err(e) => {
                     let _ = app.emit("scan://error", e);

@@ -16,6 +16,38 @@ export function App() {
     void init();
   }, [init]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
+        return;
+      }
+      const s = useStore.getState();
+      switch (e.key) {
+        case " ":
+          e.preventDefault();
+          void s.playPause();
+          break;
+        case "ArrowRight":
+          void s.seekBy(5000);
+          break;
+        case "ArrowLeft":
+          void s.seekBy(-5000);
+          break;
+        case "s":
+        case "S":
+          void s.toggleShuffle();
+          break;
+        case "r":
+        case "R":
+          void s.cycleRepeat();
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="win">
       <TopBar />

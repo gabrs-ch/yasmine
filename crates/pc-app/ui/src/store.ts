@@ -1,11 +1,13 @@
 import { create } from "zustand";
 import {
   api,
+  onPlaybackState,
   onScanDone,
   onScanError,
   onScanProgress,
   type Artist,
   type OpenResult,
+  type Playback,
   type Playlist,
   type Sort,
   type Source,
@@ -32,6 +34,8 @@ interface AppStore {
   scan: { active: boolean; done: number } | null;
   toast: string | null;
 
+  playback: Playback | null;
+
   init: () => Promise<void>;
   refreshLibrary: () => Promise<void>;
   openSource: (s: Source) => Promise<void>;
@@ -39,6 +43,16 @@ interface AppStore {
   setQuery: (q: string) => void;
   pickFolder: () => Promise<void>;
   rescan: () => Promise<void>;
+
+  playAt: (index: number) => Promise<void>;
+  playPause: () => Promise<void>;
+  next: () => Promise<void>;
+  prev: () => Promise<void>;
+  seek: (ms: number) => Promise<void>;
+  seekBy: (deltaMs: number) => Promise<void>;
+  setVolume: (v: number) => Promise<void>;
+  toggleShuffle: () => Promise<void>;
+  cycleRepeat: () => Promise<void>;
 }
 
 function sameSource(a: Source, b: Source): boolean {
@@ -62,9 +76,11 @@ export const useStore = create<AppStore>((set, get) => ({
   total: 0,
   scan: null,
   toast: null,
+  playback: null,
 
   init: async () => {
-    // eventos do scan primeiro, pra não perder um que dispare no meio do load
+    // eventos primeiro, pra não perder um que dispare no meio do load
+    onPlaybackState((p) => set({ playback: p }));
     onScanProgress((p) => set({ scan: { active: true, done: p.done } }));
     onScanDone(async (d) => {
       set({
@@ -81,8 +97,11 @@ export const useStore = create<AppStore>((set, get) => ({
     });
     onScanError((msg) => set({ scan: null, toast: `scan failed: ${msg}` }));
 
-    const root = await api.currentRoot();
-    set({ root });
+    const [root, playback] = await Promise.all([
+      api.currentRoot(),
+      api.playbackSnapshot(),
+    ]);
+    set({ root, playback });
     if (root) {
       await get().refreshLibrary();
       await get().openSource({ kind: "library" });
@@ -127,6 +146,28 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ scan: { active: true, done: 0 } });
     await api.rescan();
   },
+
+  playAt: async (index) => set({ playback: await api.playAt(index) }),
+  playPause: async () => set({ playback: await api.playPause() }),
+  next: async () => set({ playback: await api.nextTrack() }),
+  prev: async () => set({ playback: await api.prevTrack() }),
+  seek: async (ms) => set({ playback: await api.seek(Math.max(0, Math.round(ms))) }),
+  seekBy: async (deltaMs) => {
+    const p = get().playback;
+    if (!p || p.durationMs == null) return;
+    await get().seek(Math.min(p.durationMs, p.positionMs + deltaMs));
+  },
+  setVolume: async (v) => {
+    const vol = Math.min(1, Math.max(0, v));
+    // otimista: o slider anda já; o backend confirma no próximo playback://state
+    set((s) => (s.playback ? { playback: { ...s.playback, volume: vol } } : {}));
+    await api.setVolume(vol);
+  },
+  toggleShuffle: async () => {
+    const p = get().playback;
+    set({ playback: await api.setShuffle(!(p?.shuffle ?? false)) });
+  },
+  cycleRepeat: async () => set({ playback: await api.cycleRepeat() }),
 }));
 
 export { sameSource };
