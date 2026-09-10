@@ -6,55 +6,41 @@ aponta o outro device.
 
 ## Instalação
 
-Baixe o executável pronto — nada pra compilar, nenhuma dependência pra
-instalar à parte:
-
 **[github.com/gabrs-ch/yasmine/releases/latest](https://github.com/gabrs-ch/yasmine/releases/latest)**
 
-- **Windows**: baixe o `.zip`, extraia, dê duplo clique em `yasmine.exe`. O
-  Windows pode avisar "O Windows protegeu seu PC" na primeira vez (o
-  executável não é assinado) — clique em "Mais informações" → "Executar
-  assim mesmo".
-- **Linux**: baixe o `.tar.gz`, extraia, dê duplo clique em `yasmine` (ou
-  `./yasmine` no terminal). Bibliotecas de áudio/gráfico (ALSA, GL) e o
-  diálogo de escolher pasta (`xdg-desktop-portal`) — praticamente todo
-  desktop Linux moderno (GNOME, KDE, XFCE) já vem com isso.
+- **Windows**: baixe o `Yasmine_*-setup.exe` e rode. Instala só pro usuário
+  atual (sem admin) e registra o "Abrir com" pros formatos de áudio. O
+  Windows pode avisar "O Windows protegeu seu PC" na primeira vez (não é
+  assinado) — "Mais informações" → "Executar assim mesmo". A interface usa
+  o **WebView2**, que o Windows 11 já traz; nas máquinas sem ele o
+  instalador baixa e adiciona na hora (precisa de internet nessa primeira
+  instalação).
+- **Linux**: baixe o `Yasmine_*.AppImage`, `chmod +x` e rode — um arquivo
+  só, portátil, sem root; apagar é apagar o arquivo. Já traz o **WebKitGTK**
+  embutido, então não depende do que a distro tem. Quem prefere pacote
+  nativo: o `.deb` (Debian/Ubuntu) declara a dependência e o apt resolve.
 
-Isso já basta pra rodar: é um binário só, dá pra executar de qualquer pasta,
-e apagar é só apagar o arquivo. Nada fica espalhado pelo sistema além da
-pasta de dados do próprio player (índice da biblioteca e cache de capa, nos
-diretórios padrão do sistema).
+A única coisa que fica no sistema é a pasta de dados do player (índice da
+biblioteca e cache de capa, nos diretórios padrão).
 
-Quer compilar você mesmo? `cargo run --release -p player-pc` (pede toolchain
-Rust estável — [rustup.rs](https://rustup.rs)).
+O "Abrir com" do gerenciador de arquivos já vem configurado pelo instalador
+(`.AppImage`/`.deb`/`setup.exe`): abrir um ou vários arquivos de áudio de
+uma vez aponta a biblioteca pra pasta deles e toca a partir do primeiro.
 
-### Abrir com
+### Compilar você mesmo
 
-Pra abrir arquivo de música direto do gerenciador de arquivos — um ou vários
-selecionados de uma vez — tem um passo a mais, porque isso é integração com
-o sistema, não só rodar o binário:
+Precisa de toolchain Rust estável ([rustup.rs](https://rustup.rs)),
+Node 20+ e, no Linux, os `-dev` do WebKitGTK
+(`libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev`).
 
-- **Linux**: dentro da pasta extraída, `./install.sh`. Copia o binário pra
-  `~/.local/bin`, registra o ícone e o `.desktop` (com `MimeType=` pros
-  formatos que o player decodifica) em `~/.local/share`. Sem `sudo`, só
-  na conta do usuário atual. Depois disso "Yasmine" aparece no menu de
-  aplicativos e no "Abrir com" de qualquer mp3/flac/m4a/ogg/opus/wav/aiff.
-- **Windows**: dentro da pasta extraída, duplo clique em
-  `register-file-types.cmd`. Grava em `HKEY_CURRENT_USER` (sem admin) o
-  registro de `Applications\yasmine.exe` pros mesmos formatos, com
-  `MultiSelectModel=Player` — selecionar vários arquivos e abrir de uma vez
-  lança uma instância só, com todos como argumento, em vez de uma por
-  arquivo.
+```
+cargo install tauri-cli --version "^2.0"
+npm --prefix crates/pc-app/ui ci
+cargo tauri dev     --config crates/pc-app/tauri.conf.json   # rodar
+cargo tauri build   --config crates/pc-app/tauri.conf.json   # empacotar
+```
 
-Sem rodar isso, ainda dá pra abrir arquivo com o Yasmine — só que na mão,
-via "Abrir com" → "Escolher outro app" → apontar pro executável. O passo
-acima só faz o sistema lembrar da escolha e listar o player pelo nome
-depois.
-
-Multi-seleção entrega os arquivos na ordem que o gerenciador de arquivos
-passou; o player aponta a biblioteca pra pasta deles (mesmo caminho de
-"apontar uma pasta de música", só que escolhido pelos arquivos, não por
-quem abriu) e toca a partir do primeiro.
+(ou `cd crates/pc-app && cargo tauri dev` / `build`.)
 
 ## Princípios
 
@@ -71,7 +57,7 @@ quem abriu) e toca a partir do primeiro.
 | `crates/core` | Modelo, schema, índice. Único crate compartilhado entre PC e Android. |
 | `crates/audio` | Decode e playback no PC (`cpal` + `symphonia`). Não vai pro Android. |
 | `crates/sync` | Pareamento, mDNS, canal Noise, sync. Isolado: é o único que fala com a rede. |
-| `crates/pc-app` | App desktop (`egui`/`eframe`). |
+| `crates/pc-app` | App desktop: back Rust (Tauri 2) + front web em `ui/` (React/TS). |
 | `crates/android-ffi` | Bindings Kotlin via uniffi. |
 | `tools/libgen` | Gerador de biblioteca sintética para medição. |
 
@@ -439,5 +425,5 @@ cargo run --release -p player-core --example playlist_bench -- ./testdata/lib50k
 Rodar o player apontado numa pasta:
 
 ```bash
-cargo run --release -p player-pc -- ./testdata/lib50k
+cargo tauri dev --config crates/pc-app/tauri.conf.json -- ./testdata/lib50k
 ```

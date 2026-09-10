@@ -28,13 +28,39 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "deb"],
+    "targets": ["appimage", "deb", "nsis"],
+    "category": "Music",
+    "shortDescription": "Local music player with direct LAN sync.",
+    "longDescription": "Yasmine plays your local music library and syncs playlists directly between your devices over the LAN — no account, no cloud, no server. Point it at a folder; to sync, point it at the other device.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["mp3", "flac", "m4a", "ogg", "opus", "wav", "aiff", "aif"],
+        "name": "Audio",
+        "description": "Audio file",
+        "mimeType": "audio/mpeg;audio/flac;audio/mp4;audio/ogg;audio/opus;audio/wav;audio/aiff",
+        "role": "Viewer"
+      }
+    ],
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

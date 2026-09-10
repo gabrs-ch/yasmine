@@ -1,9 +1,8 @@
 name: Release
 
-# Dispara em tag `v*` (ex. v0.1.0) — cada tag vira uma versão baixável pra
-# quem só quer usar o player, sem compilar nada. O CI comum (ci.yml) já
-# garante que o código builda e passa nos testes a cada push; este workflow
-# só entra quando alguém decide que aquele estado é uma versão de verdade.
+# Dispara em tag `v*` (ex. v0.5.0) — cada tag vira uma versão baixável.
+# O CI comum (ci.yml) garante que builda e passa nos testes a cada push;
+# este workflow empacota AppImage/.deb (Linux) e o setup NSIS (Windows).
 on:
   push:
     tags:
@@ -13,64 +12,64 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  bundle:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            asset: yasmine-linux-x86_64.tar.gz
+            bundles: appimage,deb
           - os: windows-latest
-            asset: yasmine-windows-x86_64.zip
+            bundles: nsis
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Dependências de sistema (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libxkbcommon-dev libgl1-mesa-dev
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            librsvg2-dev libssl-dev
 
-      - uses: Swatinem/rust-cache@v2
+      - name: tauri-cli
+        run: cargo install tauri-cli --version "^2.0" --locked
 
-      - name: Build (release)
-        run: cargo build --release -p player-pc
+      - name: Instala o frontend
+        working-directory: crates/pc-app/ui
+        run: npm ci
 
-      # Cada pacote já sai pronto pra abrir — binário na raiz do arquivo, sem
-      # precisar procurar dentro de uma pasta — e com o que a instalação de
-      # verdade (não só "rodar uma vez") precisa: no Linux, o `.desktop` e o
-      # ícone que `install.sh` registra; no Windows, o script que associa a
-      # extensões de áudio.
-      - name: Empacotar (Linux)
-        if: runner.os == 'Linux'
+      # `cargo tauri build` roda o beforeBuildCommand (npm run build) e
+      # empacota. No Linux o AppImage sai auto-contido (o próprio bundler
+      # copia o WebKitGTK pra dentro). No Windows o WebView2 é baixado na
+      # instalação se faltar (Win11 já tem).
+      - name: Empacota
+        working-directory: crates/pc-app
+        run: cargo tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Coleta os pacotes
+        shell: bash
         run: |
           mkdir dist
-          cp target/release/yasmine dist/
-          cp crates/pc-app/assets/icon-256.png dist/
-          cp packaging/linux/yasmine.desktop dist/
-          cp packaging/linux/install.sh dist/
-          cp README.md dist/
-          tar -czf ${{ matrix.asset }} -C dist .
-
-      - name: Empacotar (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path dist
-          Copy-Item target/release/yasmine.exe dist/
-          Copy-Item packaging/windows/register-file-types.ps1 dist/
-          Copy-Item packaging/windows/register-file-types.cmd dist/
-          Copy-Item README.md dist/
-          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset }}
+          find target/release/bundle -type f \
+            \( -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) \
+            -exec cp {} dist/ \;
+          ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: ${{ matrix.asset }}
+          name: yasmine-${{ runner.os }}
+          path: dist/*
 
   release:
-    needs: build
+    needs: bundle
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -79,8 +78,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-
-      - name: Publicar release
+      - name: Publica a release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
