@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "libgen"
-version = "0.4.2"
+version = "0.5.1"
 dependencies = [
  "lofty",
 ]
@@ -2741,14 +2741,14 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "player-android-ffi"
-version = "0.4.2"
+version = "0.5.1"
 dependencies = [
  "player-core",
 ]
 
 [[package]]
 name = "player-audio"
-version = "0.4.2"
+version = "0.5.1"
 dependencies = [
  "cpal",
  "rtrb",
@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "player-core"
-version = "0.4.2"
+version = "0.5.1"
 dependencies = [
  "blake3",
  "image",
@@ -2773,7 +2773,7 @@ dependencies = [
 
 [[package]]
 name = "player-pc"
-version = "0.4.2"
+version = "0.5.1"
 dependencies = [
  "directories",
  "image",
@@ -2789,7 +2789,7 @@ dependencies = [
 
 [[package]]
 name = "player-sync"
-version = "0.4.2"
+version = "0.5.1"
 dependencies = [
  "player-core",
 ]
