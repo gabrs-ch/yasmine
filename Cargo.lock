@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "libgen"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "lofty",
 ]
@@ -4271,7 +4271,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "player-audio"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "cpal",
  "rtrb",
@@ -4281,7 +4281,7 @@ dependencies = [
 
 [[package]]
 name = "player-core"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "blake3",
  "image",
@@ -4296,18 +4296,21 @@ dependencies = [
 
 [[package]]
 name = "player-pc"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "directories",
  "image",
  "notify",
  "player-audio",
  "player-core",
+ "qrcode",
+ "rusqlite",
  "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "uuid",
+ "yasmine-sync",
 ]
 
 [[package]]
@@ -8020,7 +8023,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "yasmine-android-ffi"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "data-encoding",
  "player-core",
@@ -8033,7 +8036,7 @@ dependencies = [
 
 [[package]]
 name = "yasmine-sync"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "blake3",
  "data-encoding",
@@ -8054,7 +8057,7 @@ dependencies = [
 
 [[package]]
 name = "yasmine-sync-host"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "directories",
  "eframe",
