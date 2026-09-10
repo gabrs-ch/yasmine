@@ -29,6 +29,31 @@
   padding: 0;
 }
 
+/* O mockup usava <div> nos botões; aqui são <button> de verdade (semântica,
+   teclado). Sem isto o WebKitGTK desenha a borda/fundo/relevo nativo — foi o
+   "branco em volta" dos ícones do topo. */
+button {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: default;
+}
+button:focus:not(:focus-visible) {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
 html,
 body,
 #root {
