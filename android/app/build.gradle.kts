@@ -77,8 +77,10 @@ android {
         applicationId = "app.yasmine"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.5.7"
+        // O Release passa `-PversionName`/`-PversionCode` derivados da tag; o
+        // build local usa o default.
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 2
+        versionName = (project.findProperty("versionName") as String?) ?: "0.5.7"
         ndk { abiFilters += abis }
     }
 
