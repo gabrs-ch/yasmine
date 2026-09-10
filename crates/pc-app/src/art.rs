@@ -10,6 +10,12 @@
 //! Ler e decodificar JPEG na thread da UI daria engasgo — ao rolar a lista
 //! e ao trocar de faixa. Então o disco fica numa thread própria e a UI só
 //! recebe pixels prontos.
+//!
+//! As texturas sobem com mipmap (`mipmap_mode`): a capa de 512px aparece na
+//! barra do player num quadrado de ~56px (112px reais em tela HiDPI), e sem
+//! mipmap essa redução de 5× serrilha. Com mipmap o backend escolhe o nível
+//! certo e a capa pequena fica lisa. Só o backend glow (o que o app usa)
+//! implementa isso hoje — nos outros o campo é ignorado, sem quebrar.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -80,7 +86,11 @@ impl ArtLoader {
 
         while let Ok((key, image)) = self.results.try_recv() {
             self.pending.remove(&key);
-            let texture = ctx.load_texture("capa", image, egui::TextureOptions::LINEAR);
+            let texture = ctx.load_texture(
+                "capa",
+                image,
+                egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear)),
+            );
             self.textures.insert(
                 key,
                 Entry {

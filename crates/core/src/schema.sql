@@ -151,6 +151,9 @@ CREATE TABLE playlist (
     -- reintroduz a playlist apagada no próximo encontro.
     deleted    INTEGER NOT NULL DEFAULT 0,
     origin     BLOB    NOT NULL REFERENCES device(id)  -- desempate de updated_at igual
+    -- image_hash BLOB (capa escolhida pelo usuário) chega via migração (db.rs
+    -- SCHEMA_VERSION 4), não está aqui: fresh install e upgrade passam pelo
+    -- mesmo ALTER TABLE.
 ) STRICT;
 
 CREATE TABLE playlist_item (

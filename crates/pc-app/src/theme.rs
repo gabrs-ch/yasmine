@@ -81,15 +81,29 @@ pub mod icon_glyph {
     pub const MINUS: char = '\u{e11c}';
     pub const SQUARE: char = '\u{e167}';
     pub const X: char = '\u{e1b2}';
+    pub const VOLUME: char = '\u{e1ab}';
+    /// `user` — marca a linha de "filtro de artista" na sidebar.
+    pub const USER: char = '\u{e19f}';
+    /// `audio-lines` — as barrinhas de "isto está tocando" na lista.
+    pub const AUDIO_LINES: char = '\u{e55a}';
 }
 
-pub const BG: Color32 = Color32::from_rgb(0x0A, 0x0A, 0x0C);
-pub const PANEL: Color32 = Color32::from_rgb(0x0E, 0x0E, 0x12);
-pub const HOVER: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x21);
-pub const RULE: Color32 = Color32::from_rgb(0x1C, 0x1C, 0x23);
-pub const TEXT: Color32 = Color32::from_rgb(0xCB, 0xCB, 0xD4);
-pub const DIM: Color32 = Color32::from_rgb(0x6B, 0x6B, 0x78);
-pub const FAINT: Color32 = Color32::from_rgb(0x43, 0x43, 0x4E);
+/// Fundo da janela — o "vão" quase preto onde os cartões de seção flutuam.
+/// Mais escuro que os cartões de propósito: é o contraste entre os dois que
+/// desenha a separação, no lugar de réguas.
+pub const BG: Color32 = Color32::from_rgb(0x08, 0x08, 0x0A);
+/// Preenchimento dos cartões — sidebar e lista. Um degrau acima do vão.
+pub const PANEL: Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
+/// Um degrau acima do cartão: cabeçalho em destaque, chips, blocos aninhados.
+pub const ELEVATED: Color32 = Color32::from_rgb(0x1C, 0x1C, 0x21);
+pub const HOVER: Color32 = Color32::from_rgb(0x21, 0x21, 0x28);
+pub const RULE: Color32 = Color32::from_rgb(0x2A, 0x2A, 0x32);
+/// Fio no contorno dos cartões — só o suficiente pra o canto arredondado
+/// pegar luz contra o vão quase preto, senão o cartão some no fundo.
+pub const CARD_STROKE: Color32 = Color32::from_rgb(0x24, 0x24, 0x2C);
+pub const TEXT: Color32 = Color32::from_rgb(0xEC, 0xEC, 0xEF);
+pub const DIM: Color32 = Color32::from_rgb(0xA2, 0xA2, 0xAB);
+pub const FAINT: Color32 = Color32::from_rgb(0x6A, 0x6A, 0x74);
 /// O acento. Um só, e usado com parcimônia.
 pub const ACCENT: Color32 = Color32::from_rgb(0x7C, 0x5C, 0xFF);
 /// Ponta escura do gradiente do acento — a barra de progresso preenchida
@@ -105,10 +119,13 @@ pub const ACCENT_BRIGHT: Color32 = Color32::from_rgb(0x9A, 0x82, 0xFF);
 pub const RADIUS: u8 = 8;
 /// Raio menor, para elementos pequenos (miniatura de capa na lista).
 pub const RADIUS_SM: u8 = 4;
+/// Raio dos cartões de seção — maior que o dos elementos dentro deles, pra
+/// leitura de "painel que contém coisas", não "mais um botão grande".
+pub const CARD_RADIUS: u8 = 12;
 
 /// Altura de uma linha da lista. Maior que a densidade "planilha" de antes —
 /// espaço suficiente pra capa respirar, no espírito do Apple Music.
-pub const ROW_HEIGHT: f32 = 44.0;
+pub const ROW_HEIGHT: f32 = 46.0;
 
 pub fn body() -> FontId {
     FontId::new(13.0, FontFamily::Proportional)
@@ -175,7 +192,9 @@ pub fn apply(ctx: &egui::Context) {
 
     visuals.panel_fill = BG;
     visuals.window_fill = BG;
-    visuals.extreme_bg_color = Color32::from_rgb(0x07, 0x07, 0x09);
+    // Fundo do campo de busca: um degrau acima do vão, pra ele ler como
+    // pílula pousada na barra de título escura, não um buraco nela.
+    visuals.extreme_bg_color = ELEVATED;
     visuals.faint_bg_color = PANEL;
     visuals.override_text_color = Some(TEXT);
     visuals.selection.bg_fill = HOVER;

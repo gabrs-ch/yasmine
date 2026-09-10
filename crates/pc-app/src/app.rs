@@ -10,6 +10,7 @@
 //!
 //! Nunca 60 fps.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -36,6 +37,11 @@ const META_ROOT: &str = "library_root";
 
 /// Chave no `meta` onde o volume mestre fica guardado entre execuções.
 const META_VOLUME: &str = "volume";
+
+/// Chave no `meta` com o hash (hex) da foto que o usuário escolheu para a
+/// linha "Your Library" da sidebar. Cosmético e local a este device — por
+/// isso vive no `meta`, não numa tabela que sincroniza.
+const META_LIBRARY_IMAGE: &str = "library_image";
 
 /// Ganho linear a aplicar numa faixa: o do nivelador se já foi medido, 1.0
 /// (sem ajuste) se a tarefa de fundo ainda não chegou nela. Faixa nova nunca
@@ -102,6 +108,13 @@ enum Source {
     Artist(ArtistId),
 }
 
+/// A aba da sidebar abaixo de "Your Library" — playlists ou artistas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SideTab {
+    Playlists,
+    Artists,
+}
+
 struct ScanJob {
     progress: Arc<AtomicUsize>,
     result: Receiver<Result<player_core::ScanReport, String>>,
@@ -116,6 +129,15 @@ pub struct App {
     root: Option<PathBuf>,
 
     source: Source,
+    /// Capa de cada playlist, resolvida no `reload` e não a cada frame: o
+    /// hash da escolha do usuário quando existe, senão até quatro capas das
+    /// faixas (uma imagem, ou o mosaico 2×2). Ver `player_core::playlist`.
+    playlist_covers: HashMap<Uuid, Vec<[u8; 32]>>,
+    /// Foto escolhida para a linha "Your Library" (hash no cache de capas).
+    library_image: Option<[u8; 32]>,
+    /// Capa do cabeçalho da lista (playlist/artista aberto). `None` na
+    /// biblioteca, que não tem cabeçalho.
+    hero_art: Option<[u8; 32]>,
     view: Vec<TrackId>,
     /// Posição de cada item de `view` na playlist ativa — paralelo a `view`,
     /// vazio quando a fonte é a biblioteca. É o que permite "remover da
@@ -125,6 +147,11 @@ pub struct App {
     sort: Sort,
     stats: Stats,
     playlists: Vec<Playlist>,
+    /// Artistas com faixa local, pra aba "Artists" da sidebar. Recarregada
+    /// junto com `playlists` — a lista só muda quando o índice muda.
+    artists: Vec<library::ArtistBrief>,
+    /// Qual lista a sidebar mostra abaixo de "Your Library".
+    side_tab: SideTab,
     /// Playlist em edição de nome: (id, texto do campo, pedir foco).
     renaming: Option<(Uuid, String, bool)>,
 
@@ -161,6 +188,11 @@ pub struct App {
     pending_play: Option<Vec<PathBuf>>,
     watcher: Option<Watcher>,
     status: String,
+    /// Espelho de `status` no frame anterior + quando ele mudou pela última
+    /// vez: o balãozinho de status some sozinho uns segundos depois de
+    /// aparecer, sem cada `self.status = …` ter que carimbar a hora.
+    status_prev: String,
+    status_at: Instant,
     focus_search: bool,
 
     /// Modo compacto: só capa, transporte e progresso, numa janela pequena
@@ -237,8 +269,14 @@ impl App {
                 .to_rgba8();
             let size = [rgba.width() as usize, rgba.height() as usize];
             let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-            cc.egui_ctx
-                .load_texture("marca", color, egui::TextureOptions::LINEAR)
+            // Com mipmap: a marca de 256px aparece a 42px na sidebar (redução
+            // de 6×) — sem os níveis intermediários o `Linear` sozinho serrilha
+            // e lê como borrado. Mesmo tratamento das capas (ver `art.rs`).
+            cc.egui_ctx.load_texture(
+                "marca",
+                color,
+                egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear)),
+            )
         };
 
         let mut app = Self {
@@ -249,6 +287,9 @@ impl App {
             paths,
             root,
             source: Source::Library,
+            playlist_covers: HashMap::new(),
+            library_image: None,
+            hero_art: None,
             artist_name: None,
             view: Vec::new(),
             view_positions: Vec::new(),
@@ -256,6 +297,8 @@ impl App {
             sort: Sort::ArtistAlbum,
             stats: Stats::default(),
             playlists: Vec::new(),
+            artists: Vec::new(),
+            side_tab: SideTab::Playlists,
             renaming: None,
             engine: Engine::new(),
             selected: None,
@@ -267,6 +310,8 @@ impl App {
             pending_play: None,
             watcher: None,
             status: String::new(),
+            status_prev: String::new(),
+            status_at: Instant::now(),
             focus_search: false,
             mini: false,
             normal_size: vec2(1000.0, 660.0),
@@ -289,6 +334,17 @@ impl App {
             .and_then(|v| v.parse().ok())
             .unwrap_or(1.0);
         app.engine.set_volume(saved_volume);
+
+        app.library_image = app
+            .db
+            .conn()
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                [META_LIBRARY_IMAGE],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|hex| hex_decode(&hex));
 
         app.reload();
         match Opened::from_args(args) {
@@ -345,7 +401,90 @@ impl App {
         }
         self.stats = library::stats(&self.db).unwrap_or_default();
         self.playlists = playlist::all(&self.db).unwrap_or_default();
+        self.artists = library::artists(&self.db).unwrap_or_default();
         self.selected = None;
+
+        // Capas das playlists e do cabeçalho, resolvidas aqui e não a cada
+        // frame: são consultas ao índice, e `reload` só roda quando algo
+        // muda de verdade (troca de fonte, fim de scan, edição de playlist).
+        self.playlist_covers = self
+            .playlists
+            .iter()
+            .map(|pl| {
+                (
+                    pl.id,
+                    playlist::cover_hashes(&self.db, pl.id).unwrap_or_default(),
+                )
+            })
+            .collect();
+        self.hero_art = self.resolve_hero_art();
+    }
+
+    /// Capa a mostrar no cabeçalho da lista: a da playlist (escolhida ou a
+    /// primeira das faixas) ou a da primeira faixa do artista. `None` na
+    /// biblioteca — lá não há cabeçalho.
+    fn resolve_hero_art(&self) -> Option<[u8; 32]> {
+        match self.source {
+            Source::Library => None,
+            Source::Playlist(id) => self
+                .playlists
+                .iter()
+                .find(|pl| pl.id == id)
+                .and_then(|pl| pl.image_hash)
+                .or_else(|| {
+                    self.playlist_covers
+                        .get(&id)
+                        .and_then(|c| c.first().copied())
+                }),
+            Source::Artist(_) => library::rows(&self.db, &self.view[..self.view.len().min(1)])
+                .ok()
+                .and_then(|mut rows| rows.pop())
+                .and_then(|row| row.art_hash),
+        }
+    }
+
+    /// Miniatura de uma playlist na sidebar: a foto escolhida pelo usuário,
+    /// senão o mosaico 2×2 das capas das faixas, senão a primeira delas,
+    /// senão um gradiente fixo pra aquela playlist.
+    fn playlist_tile(&mut self, pl: &Playlist) -> Tile {
+        if let Some(hash) = pl.image_hash
+            && let Some(tex) = self.art.texture(&hash, false)
+        {
+            return Tile::Image(tex);
+        }
+        let covers = self
+            .playlist_covers
+            .get(&pl.id)
+            .cloned()
+            .unwrap_or_default();
+        if covers.len() >= 4 {
+            let ready: Vec<_> = covers
+                .iter()
+                .take(4)
+                .filter_map(|hash| self.art.texture(hash, false))
+                .collect();
+            if let Ok(four) = <[egui::TextureId; 4]>::try_from(ready) {
+                return Tile::Mosaic(four);
+            }
+        }
+        if let Some(hash) = covers.first()
+            && let Some(tex) = self.art.texture(hash, false)
+        {
+            return Tile::Image(tex);
+        }
+        let (a, b) = tile_gradient(pl.id.as_bytes()[0]);
+        Tile::Gradient(a, b)
+    }
+
+    /// Miniatura da linha "Your Library": a foto escolhida pelo usuário, ou a
+    /// marca do app.
+    fn library_tile(&mut self) -> Tile {
+        if let Some(hash) = self.library_image
+            && let Some(tex) = self.art.texture(&hash, false)
+        {
+            return Tile::Image(tex);
+        }
+        Tile::Image(self.mark.id())
     }
 
     /// Troca a fonte da lista e recarrega. Sair de um filtro de artista pra
@@ -373,14 +512,14 @@ impl App {
     /// `track`, quando presente, já entra na lista nova — é o caso de "Nova
     /// playlist…" a partir do menu de contexto de uma faixa.
     fn create_playlist(&mut self, track: Option<TrackId>) {
-        let Ok(id) = playlist::create(&self.db, "Nova playlist") else {
+        let Ok(id) = playlist::create(&self.db, "New Playlist") else {
             return;
         };
         if let Some(track) = track {
             let _ = playlist::append(&mut self.db, id, &[track]);
         }
         self.playlists = playlist::all(&self.db).unwrap_or_default();
-        self.renaming = Some((id, "Nova playlist".to_owned(), true));
+        self.renaming = Some((id, "New Playlist".to_owned(), true));
         self.set_source(Source::Playlist(id));
     }
 
@@ -471,7 +610,7 @@ impl App {
         // O diálogo nativo é modal e bloqueia esta thread — que é o
         // comportamento certo: não há nada a desenhar enquanto ele está aberto.
         let Some(folder) = rfd::FileDialog::new()
-            .set_title("Escolha a pasta de música")
+            .set_title("Choose your music folder")
             .pick_folder()
         else {
             return;
@@ -485,24 +624,84 @@ impl App {
     /// que carrega a capa no índice.
     fn pick_album_art(&mut self, track: TrackId) {
         let Some(path) = rfd::FileDialog::new()
-            .set_title("Escolha uma imagem para a capa")
-            .add_filter("Imagem", &["jpg", "jpeg", "png", "webp", "bmp", "gif"])
+            .set_title("Choose a cover image")
+            .add_filter("Image", &["jpg", "jpeg", "png", "webp", "bmp", "gif"])
             .pick_file()
         else {
             return;
         };
 
         let Ok(bytes) = std::fs::read(&path) else {
-            self.status = format!("não consegui ler {}", path.display());
+            self.status = format!("couldn't read {}", path.display());
             return;
         };
 
         let cache = ArtCache::new(self.paths.cache.clone());
         match player_core::art::set_album_art(&self.db, &cache, track, &bytes) {
             Ok(Some(_)) => self.reload(),
-            Ok(None) => self.status = "esse arquivo não é uma imagem válida".into(),
-            Err(err) => self.status = format!("não consegui salvar a capa: {err}"),
+            Ok(None) => self.status = "that file isn't a valid image".into(),
+            Err(err) => self.status = format!("couldn't save cover: {err}"),
         }
+    }
+
+    /// Pede uma imagem ao usuário e a materializa no cache de capas (mesmas
+    /// miniaturas 96/512 das capas de álbum). Devolve o hash do blob, ou
+    /// `None` se o usuário cancelou ou o arquivo não é imagem — o caminho de
+    /// erro já deixa a mensagem em `self.status`.
+    fn pick_image_into_cache(&mut self) -> Option<[u8; 32]> {
+        let path = rfd::FileDialog::new()
+            .set_title("Choose a photo")
+            .add_filter("Image", &["jpg", "jpeg", "png", "webp", "bmp", "gif"])
+            .pick_file()?;
+
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.status = format!("couldn't read {}", path.display());
+                return None;
+            }
+        };
+
+        match ArtCache::new(self.paths.cache.clone()).store(&bytes) {
+            Some(art) => Some(art.hash),
+            None => {
+                self.status = "that file isn't a valid image".into();
+                None
+            }
+        }
+    }
+
+    fn set_playlist_image(&mut self, playlist_id: Uuid) {
+        let Some(hash) = self.pick_image_into_cache() else {
+            return;
+        };
+        let _ = playlist::set_image(&self.db, playlist_id, Some(&hash));
+        self.reload();
+    }
+
+    fn clear_playlist_image(&mut self, playlist_id: Uuid) {
+        let _ = playlist::set_image(&self.db, playlist_id, None);
+        self.reload();
+    }
+
+    fn set_library_image(&mut self) {
+        let Some(hash) = self.pick_image_into_cache() else {
+            return;
+        };
+        let _ = self.db.conn().execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (META_LIBRARY_IMAGE, hex_encode(&hash)),
+        );
+        self.library_image = Some(hash);
+    }
+
+    fn clear_library_image(&mut self) {
+        let _ = self
+            .db
+            .conn()
+            .execute("DELETE FROM meta WHERE key = ?1", [META_LIBRARY_IMAGE]);
+        self.library_image = None;
     }
 
     /// Vincula uma playlist a uma pasta escolhida pelo usuário: toda faixa
@@ -510,7 +709,7 @@ impl App {
     /// fazer parte da playlist sozinha.
     fn link_playlist_folder(&mut self, playlist_id: Uuid) {
         let Some(folder) = rfd::FileDialog::new()
-            .set_title("Escolha a pasta para vincular à playlist")
+            .set_title("Choose a folder to link to the playlist")
             .pick_folder()
         else {
             return;
@@ -523,18 +722,18 @@ impl App {
                 if self.source == Source::Playlist(playlist_id) {
                     self.reload();
                 }
-                self.status = "pasta vinculada".into();
+                self.status = "folder linked".into();
             }
             Ok(Err(player_core::playlist_folder::ForaDaBiblioteca)) => {
-                self.status = "essa pasta está fora da biblioteca atual".into();
+                self.status = "that folder is outside the current library".into();
             }
-            Err(err) => self.status = format!("não consegui vincular a pasta: {err}"),
+            Err(err) => self.status = format!("couldn't link folder: {err}"),
         }
     }
 
     fn unlink_playlist_folder(&mut self, playlist_id: Uuid, root_id: i64, rel_prefix: &str) {
         let _ = player_core::playlist_folder::unlink(&self.db, playlist_id, root_id, rel_prefix);
-        self.status = "pasta desvinculada".into();
+        self.status = "folder unlinked".into();
     }
 
     /// Passa a vigiar `folder`, trocando o vigia anterior.
@@ -546,8 +745,8 @@ impl App {
         self.watcher = match Watcher::new(folder, move || ctx.request_repaint()) {
             Ok(watcher) => Some(watcher),
             Err(err) => {
-                // Vigiar é conveniência: sem ele resta o botão "Reescanear".
-                self.status = format!("não consegui vigiar a pasta: {err}");
+                // Vigiar é conveniência: sem ele resta o botão "Rescan".
+                self.status = format!("couldn't watch folder: {err}");
                 None
             }
         };
@@ -579,7 +778,7 @@ impl App {
             })
             .ok();
 
-        self.status = "escaneando…".into();
+        self.status = "scanning…".into();
         self.scan = Some(ScanJob {
             progress,
             result: rx,
@@ -604,7 +803,7 @@ impl App {
         match outcome {
             Ok(report) => {
                 self.status = format!(
-                    "{} novas · {} atualizadas · {} removidas · {} inalteradas em {:.1}s",
+                    "{} new · {} updated · {} removed · {} unchanged in {:.1}s",
                     report.added,
                     report.updated,
                     report.removed,
@@ -628,7 +827,7 @@ impl App {
                     self.play_files(&files);
                 }
             }
-            Err(err) => self.status = format!("falha no scan: {err}"),
+            Err(err) => self.status = format!("scan failed: {err}"),
         }
     }
 
@@ -689,7 +888,7 @@ impl App {
             .filter_map(|file| library::find_by_absolute_path(&self.db, &root, file).ok()?)
             .collect();
         if tracks.is_empty() {
-            self.status = "não consegui indexar os arquivos abertos".into();
+            self.status = "couldn't index the opened files".into();
             return;
         }
 
@@ -717,7 +916,7 @@ impl App {
             return;
         };
         let Ok(Some(info)) = library::playback_info(&self.db, id) else {
-            self.status = "não encontrei o arquivo dessa faixa".into();
+            self.status = "couldn't find that track's file".into();
             return;
         };
 
@@ -829,25 +1028,20 @@ impl App {
         }
 
         ui.horizontal_centered(|ui| {
-            // 4px bastava quando a decoração nativa emprestava uma borda de
-            // janela de verdade antes do conteúdo começar. Sem ela, esse
-            // espaço É a única coisa entre o botão e a quina da janela — 4px
-            // ficava colado, esquisito. 12px é o mesmo respiro que sobra nos
-            // outros cantos agora.
             ui.add_space(12.0);
-            // Antes de escolher uma biblioteca, "Pasta…" é a única coisa que
-            // dá pra fazer — fica como botão rotulado de ação primária, e a
-            // tela de boas-vindas repete essa oferta grande. Com biblioteca
-            // carregada, vira um ícone de pasta com o caminho ao lado:
-            // reconfiguração ocasional não precisa de um botão de texto
-            // ocupando a barra.
+            // Antes de escolher uma biblioteca, "Choose music folder…" é a
+            // única coisa que dá pra fazer — fica como botão rotulado de ação
+            // primária, e a tela de boas-vindas repete essa oferta grande.
+            // Com biblioteca carregada, vira um ícone de pasta com o caminho
+            // ao lado: reconfiguração ocasional não precisa de um botão de
+            // texto ocupando a barra.
             if self.root.is_none() {
-                if primary_button(ui, "Escolher pasta de música…").clicked() {
+                if primary_button(ui, "Choose music folder…").clicked() {
                     self.pick_folder();
                 }
             } else {
                 if icon_button(ui, theme::icon_glyph::FOLDER)
-                    .on_hover_text("Escolher outra pasta de música")
+                    .on_hover_text("Choose a different music folder")
                     .clicked()
                 {
                     self.pick_folder();
@@ -855,14 +1049,14 @@ impl App {
                 if let Some(root) = &self.root {
                     let label = root.to_string_lossy();
                     ui.label(
-                        egui::RichText::new(shorten(&label, 44))
+                        egui::RichText::new(shorten(&label, 40))
                             .font(theme::small())
                             .color(theme::DIM),
                     );
                 }
                 if self.scan.is_none()
                     && icon_button(ui, theme::icon_glyph::REFRESH)
-                        .on_hover_text("Reescanear a pasta")
+                        .on_hover_text("Rescan folder")
                         .clicked()
                     && let Some(root) = self.root.clone()
                 {
@@ -870,25 +1064,26 @@ impl App {
                 }
             }
 
-            ui.add_space(8.0);
-            // Largura responsiva, não fixa: numa janela estreita, uma caixa
-            // de busca de 220px sobra do espaço disponível e invade o texto
-            // da direita — as duas são desenhadas sem uma saber da outra,
-            // então o resultado é sobreposição, não quebra de linha. Reserva
-            // uma folga pro texto da direita antes de decidir a largura —
-            // agora incluindo os três controles de janela do lado direito.
-            let search_width = (ui.available_width() - 340.0).clamp(60.0, 220.0);
             // A busca só filtra a biblioteca — dentro de uma playlist ela
             // ficaria filtrando contra o índice errado. Desabilitada, não
             // escondida: o texto continua ali para quando o usuário voltar.
             let in_library = self.source == Source::Library;
+            let search_width = (ui.available_width() - 240.0).clamp(140.0, 380.0);
+            // Centraliza o campo de busca na janela (no espírito do Spotify),
+            // não colado no cluster da esquerda. `search_icon` + folga de -6
+            // ocupam ~14px antes do campo.
+            let cluster_w = 14.0 + search_width;
+            let target = full.center().x - cluster_w / 2.0;
+            let here = ui.cursor().left();
+            ui.add_space((target - here).max(10.0));
+
             ui.add_enabled_ui(in_library, |ui| {
                 search_icon(ui);
                 ui.add_space(-6.0);
                 let search = ui.add(
                     egui::TextEdit::singleline(&mut self.query)
                         .desired_width(search_width)
-                        .hint_text("buscar"),
+                        .hint_text("Search your library"),
                 );
                 if std::mem::take(&mut self.focus_search) && in_library {
                     search.request_focus();
@@ -899,8 +1094,7 @@ impl App {
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Mesmo respiro do canto esquerdo, agora do lado direito —
-                // sem ele o botão de fechar ficava colado na quina.
+                // Mesmo respiro do canto esquerdo, agora do lado direito.
                 ui.add_space(12.0);
                 // Controles de janela — os que o xfwm4 desenhava sozinho
                 // antes de `with_decorations(false)`. Primeiro a entrar no
@@ -917,175 +1111,241 @@ impl App {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
-                ui.add_space(10.0);
-                let texto = match (&self.scan, self.source) {
-                    (Some(job), _) => {
-                        format!("escaneando… {}", job.progress.load(Ordering::Relaxed))
-                    }
-                    (None, Source::Playlist(id)) => self
-                        .playlists
-                        .iter()
-                        .find(|p| p.id == id)
-                        .map_or_else(String::new, |p| {
-                            format!("{}  ·  {} faixas", p.name, p.items)
-                        }),
-                    (None, Source::Artist(_)) => format!(
-                        "{}  ·  {} faixas",
-                        self.artist_name.as_deref().unwrap_or("artista"),
-                        self.view.len()
-                    ),
-                    (None, Source::Library) => format!(
-                        "{} faixas · {} álbuns · {} artistas",
-                        self.stats.tracks, self.stats.albums, self.stats.artists
-                    ),
-                };
-                ui.label(
-                    egui::RichText::new(texto)
+                // Só enquanto escaneia: o resto do tempo o contexto da fonte
+                // aberta mora no cabeçalho da lista, não aqui.
+                if let Some(job) = &self.scan {
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "scanning… {}",
+                            job.progress.load(Ordering::Relaxed)
+                        ))
                         .font(theme::small())
                         .color(theme::DIM),
-                );
+                    );
+                }
             });
         });
-        // Fio de 1px separando o topo do conteúdo — o Apple Music usa a
-        // mesma régua fina entre as regiões da janela; sem ela, o topo e a
-        // lista eram a mesma cor sólida sem nenhuma articulação entre as
-        // duas.
-        ui.painter().line_segment(
-            [
-                pos2(full.left(), full.bottom() - 0.5),
-                pos2(full.right(), full.bottom() - 0.5),
-            ],
-            Stroke::new(1.0, theme::RULE),
-        );
     }
 
-    /// Barra lateral: biblioteca + playlists. Larga o bastante para nomes
-    /// razoáveis, estreita o bastante para não roubar espaço da lista.
+    /// Barra lateral no estilo "Your Library" do Spotify: a biblioteca e cada
+    /// playlist como uma linha com miniatura, nome e subtítulo.
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        let full = ui.max_rect();
         ui.spacing_mut().item_spacing.y = 0.0;
-        ui.add_space(6.0);
 
-        if sidebar_row(ui, "BIBLIOTECA", self.source == Source::Library, 0.0).clicked() {
-            self.set_source(Source::Library);
-        }
-        // Filtro de artista ativo: uma linha recuada logo abaixo, marcada
-        // como a fonte atual. Clicar em BIBLIOTECA acima limpa o filtro;
-        // clicar aqui não faz nada (já está aqui).
-        if let (Source::Artist(_), Some(name)) = (self.source, self.artist_name.clone()) {
-            sidebar_row(ui, &name, true, 14.0);
-        }
-
-        ui.add_space(14.0);
         ui.horizontal(|ui| {
-            ui.add_space(10.0);
+            ui.add_space(14.0);
+            ui.add_space(2.0);
             ui.label(
-                egui::RichText::new("PLAYLISTS")
-                    .font(theme::small())
-                    .color(theme::FAINT),
+                egui::RichText::new("Your Library")
+                    .font(theme::strong(15.0))
+                    .color(theme::TEXT),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(8.0);
+                ui.add_space(12.0);
                 if add_playlist_button(ui)
-                    .on_hover_text("Nova playlist")
+                    .on_hover_text("New playlist")
                     .clicked()
                 {
                     self.create_playlist(None);
                 }
             });
         });
-        ui.add_space(4.0);
+        ui.add_space(8.0);
+
+        let lib_tile = self.library_tile();
+        let lib_sub = format!(
+            "{} tracks · {} albums",
+            self.stats.tracks, self.stats.albums
+        );
+        let lib = sidebar_entry(
+            ui,
+            &lib_tile,
+            "Your Library",
+            &lib_sub,
+            self.source == Source::Library,
+            None,
+        );
+        if lib.clicked() {
+            self.set_source(Source::Library);
+        }
+        lib.context_menu(|ui| {
+            if ui.button("Change photo…").clicked() {
+                self.set_library_image();
+                ui.close();
+            }
+            if self.library_image.is_some() && ui.button("Remove photo").clicked() {
+                self.clear_library_image();
+                ui.close();
+            }
+        });
+
+        // Filtro de artista ativo: uma linha logo abaixo, marcada como a
+        // fonte atual. Clicar em "Your Library" acima limpa o filtro.
+        if let (Source::Artist(id), Some(name)) = (self.source, self.artist_name.clone()) {
+            let (a, b) = tile_gradient((id.0 & 0xff) as u8);
+            sidebar_entry(
+                ui,
+                &Tile::Gradient(a, b),
+                &name,
+                "Artist",
+                true,
+                Some(theme::icon_glyph::USER),
+            );
+        }
+
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if chip(ui, "Playlists", self.side_tab == SideTab::Playlists).clicked() {
+                self.side_tab = SideTab::Playlists;
+            }
+            if chip(ui, "Artists", self.side_tab == SideTab::Artists).clicked() {
+                self.side_tab = SideTab::Artists;
+            }
+        });
+        ui.add_space(8.0);
+
+        if self.side_tab == SideTab::Artists {
+            self.artist_list(ui);
+            return;
+        }
 
         let playlists = self.playlists.clone();
         let mut pending_delete = None;
 
-        for pl in &playlists {
-            let is_active = self.source == Source::Playlist(pl.id);
-            let is_renaming = matches!(&self.renaming, Some((id, _, _)) if *id == pl.id);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for pl in &playlists {
+                    let is_active = self.source == Source::Playlist(pl.id);
+                    let is_renaming = matches!(&self.renaming, Some((id, _, _)) if *id == pl.id);
 
-            if is_renaming {
-                let response = ui
-                    .horizontal(|ui| {
-                        ui.add_space(9.0);
-                        let (_, buf, _) = self
-                            .renaming
-                            .as_mut()
-                            .expect("checado por is_renaming acima");
-                        ui.add(
-                            egui::TextEdit::singleline(buf)
-                                .desired_width(ui.available_width() - 12.0)
-                                .font(theme::body()),
-                        )
-                    })
-                    .inner;
+                    if is_renaming {
+                        let response = ui
+                            .horizontal(|ui| {
+                                ui.add_space(14.0);
+                                let (_, buf, _) = self
+                                    .renaming
+                                    .as_mut()
+                                    .expect("checado por is_renaming acima");
+                                ui.add(
+                                    egui::TextEdit::singleline(buf)
+                                        .desired_width(ui.available_width() - 16.0)
+                                        .font(theme::body()),
+                                )
+                            })
+                            .inner;
 
-                if let Some((_, _, focus)) = &mut self.renaming
-                    && std::mem::take(focus)
-                {
-                    response.request_focus();
-                }
-                if response.lost_focus() {
-                    self.commit_rename();
-                }
-                continue;
-            }
-
-            let label = format!("{}  ({})", pl.name, pl.items);
-            let row = sidebar_row(ui, &label, is_active, 0.0);
-            if row.clicked() {
-                self.set_source(Source::Playlist(pl.id));
-            }
-            row.context_menu(|ui| {
-                if ui.button("Renomear").clicked() {
-                    self.renaming = Some((pl.id, pl.name.clone(), true));
-                    ui.close();
-                }
-                if ui.button("Apagar").clicked() {
-                    pending_delete = Some(pl.id);
-                    ui.close();
-                }
-                ui.separator();
-                if ui
-                    .button("Vincular pasta…")
-                    .on_hover_text(
-                        "Toda faixa dessa pasta entra sozinha na playlist, \
-                         sem precisar arrastar uma por uma",
-                    )
-                    .clicked()
-                {
-                    self.link_playlist_folder(pl.id);
-                    ui.close();
-                }
-                for link in
-                    player_core::playlist_folder::links_for(&self.db, pl.id).unwrap_or_default()
-                {
-                    let label = if link.rel_prefix.is_empty() {
-                        "Desvincular pasta inteira".to_owned()
-                    } else {
-                        format!("Desvincular \"{}\"", link.rel_prefix)
-                    };
-                    if ui.button(label).clicked() {
-                        self.unlink_playlist_folder(pl.id, link.root_id, &link.rel_prefix);
-                        ui.close();
+                        if let Some((_, _, focus)) = &mut self.renaming
+                            && std::mem::take(focus)
+                        {
+                            response.request_focus();
+                        }
+                        if response.lost_focus() {
+                            self.commit_rename();
+                        }
+                        continue;
                     }
+
+                    let tile = self.playlist_tile(pl);
+                    let sub = format!("Playlist · {} tracks", pl.items);
+                    let row = sidebar_entry(ui, &tile, &pl.name, &sub, is_active, None);
+                    if row.clicked() {
+                        self.set_source(Source::Playlist(pl.id));
+                    }
+                    row.context_menu(|ui| {
+                        if ui.button("Rename").clicked() {
+                            self.renaming = Some((pl.id, pl.name.clone(), true));
+                            ui.close();
+                        }
+                        if ui.button("Change photo…").clicked() {
+                            self.set_playlist_image(pl.id);
+                            ui.close();
+                        }
+                        if pl.image_hash.is_some() && ui.button("Remove photo").clicked() {
+                            self.clear_playlist_image(pl.id);
+                            ui.close();
+                        }
+                        if ui.button("Delete").clicked() {
+                            pending_delete = Some(pl.id);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui
+                            .button("Link folder…")
+                            .on_hover_text(
+                                "Every track in that folder joins this playlist automatically",
+                            )
+                            .clicked()
+                        {
+                            self.link_playlist_folder(pl.id);
+                            ui.close();
+                        }
+                        for link in player_core::playlist_folder::links_for(&self.db, pl.id)
+                            .unwrap_or_default()
+                        {
+                            let label = if link.rel_prefix.is_empty() {
+                                "Unlink whole folder".to_owned()
+                            } else {
+                                format!("Unlink \"{}\"", link.rel_prefix)
+                            };
+                            if ui.button(label).clicked() {
+                                self.unlink_playlist_folder(pl.id, link.root_id, &link.rel_prefix);
+                                ui.close();
+                            }
+                        }
+                    });
                 }
             });
-        }
 
         if let Some(id) = pending_delete {
             self.delete_playlist(id);
         }
+    }
 
-        // Mesmo fio de 1px do topo, na borda direita — separa a sidebar do
-        // conteúdo em vez de deixar a diferença de tom (`PANEL` contra `BG`)
-        // como única articulação entre as duas.
-        ui.painter().line_segment(
-            [
-                pos2(full.right() - 0.5, full.top()),
-                pos2(full.right() - 0.5, full.bottom()),
-            ],
-            Stroke::new(1.0, theme::RULE),
-        );
+    /// A aba "Artists" da sidebar: cada artista com faixa local, clicar abre
+    /// `Source::Artist` (a mesma view do "Only tracks by …" do menu de faixa).
+    fn artist_list(&mut self, ui: &mut egui::Ui) {
+        if self.artists.is_empty() {
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                ui.label(
+                    egui::RichText::new("No artists indexed yet.")
+                        .font(theme::small())
+                        .color(theme::DIM),
+                );
+            });
+            return;
+        }
+
+        let artists = self.artists.clone();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for artist in &artists {
+                    let active = self.source == Source::Artist(artist.id);
+                    let (a, b) = tile_gradient((artist.id.0 & 0xff) as u8);
+                    let sub = if artist.tracks == 1 {
+                        "1 track".to_owned()
+                    } else {
+                        format!("{} tracks", artist.tracks)
+                    };
+                    let row = sidebar_entry(
+                        ui,
+                        &Tile::Gradient(a, b),
+                        &artist.name,
+                        &sub,
+                        active,
+                        Some(theme::icon_glyph::USER),
+                    );
+                    if row.clicked() {
+                        self.view_artist(artist.id, artist.name.clone());
+                    }
+                }
+            });
     }
 
     fn list(&mut self, ui: &mut egui::Ui) {
@@ -1107,22 +1367,22 @@ impl App {
                     ui.add_space(16.0);
                 }
                 let texto = match self.source {
-                    _ if self.root.is_none() => "Escolha uma pasta de música para começar.",
+                    _ if self.root.is_none() => "Choose a music folder to get started.",
                     Source::Playlist(_) => {
-                        "Esta playlist está vazia. Botão direito numa faixa da biblioteca para adicionar."
+                        "This playlist is empty. Right-click a track in your library to add it."
                     }
-                    Source::Artist(_) => "Nenhuma faixa desse artista.",
-                    Source::Library if self.query.is_empty() => "Nenhuma faixa indexada nessa pasta.",
-                    Source::Library => "Nada encontrado.",
+                    Source::Artist(_) => "No tracks by this artist.",
+                    Source::Library if self.query.is_empty() => "No tracks indexed in this folder.",
+                    Source::Library => "Nothing found.",
                 };
                 ui.label(egui::RichText::new(texto).color(theme::DIM));
                 // A tela de boas-vindas ganha um botão de verdade, não só a
-                // dica de texto — "Pasta…" no topo já faz isso, mas escondido
-                // num canto pequeno na primeira execução (tela em branco,
-                // nada pra olhar) é fácil de não notar.
+                // dica de texto — o ícone de pasta no topo já faz isso, mas
+                // escondido num canto pequeno na primeira execução (tela em
+                // branco, nada pra olhar) é fácil de não notar.
                 if self.root.is_none() {
                     ui.add_space(16.0);
-                    if primary_button(ui, "Escolher pasta de música…").clicked() {
+                    if primary_button(ui, "Choose music folder…").clicked() {
                         self.pick_folder();
                     }
                 }
@@ -1138,18 +1398,104 @@ impl App {
         let width = ui.available_width();
         let cols = Columns::new(width);
 
-        // Cabeçalho: rótulos apagados e uma régua de 1px. Sem fundo, sem caixa.
-        let (header, _) = ui.allocate_exact_size(vec2(width, 18.0), Sense::hover());
+        // Cabeçalho da fonte aberta (playlist/artista): capa grande, nome e
+        // contagem, sobre um banho do acento que desce até o `PANEL` — o
+        // "hero" do Spotify, encolhido pra não engolir a janela. A biblioteca
+        // não tem: ela já é o estado padrão, não precisa se anunciar.
+        if !matches!(self.source, Source::Library) {
+            let (hero, _) = ui.allocate_exact_size(vec2(width, 108.0), Sense::hover());
+            let painter = ui.painter();
+            let cr = CornerRadius {
+                nw: theme::CARD_RADIUS,
+                ne: theme::CARD_RADIUS,
+                sw: 0,
+                se: 0,
+            };
+            // Degradê do roxo (topo) até o `PANEL` (base), pra o hero se
+            // dissolver na lista em vez de terminar numa borda. `epaint` não
+            // tem pincel de degradê, então são quatro faixas opacas de altura
+            // decrescente — cada uma com os cantos de cima arredondados como
+            // o cartão, o que evita o "dente" quadrado no canto.
+            painter.rect_filled(hero, cr, theme::PANEL);
+            let top = Color32::from_rgb(0x3B, 0x2D, 0x6D);
+            for (frac, t) in [(1.0_f32, 0.78_f32), (0.70, 0.52), (0.44, 0.28), (0.22, 0.0)] {
+                let band = Rect::from_min_max(
+                    hero.min,
+                    pos2(hero.right(), hero.top() + hero.height() * frac),
+                );
+                painter.rect_filled(band, cr, lerp_color(top, theme::PANEL, t));
+            }
+
+            let cover = Rect::from_min_size(
+                pos2(hero.left() + 22.0, hero.bottom() - 16.0 - 80.0),
+                vec2(80.0, 80.0),
+            );
+            image_shadow(painter, cover, theme::RADIUS);
+            if let Some(texture) = self.hero_art.and_then(|hash| self.art.texture(&hash, true)) {
+                rounded_image(painter, cover, texture, theme::RADIUS);
+            } else {
+                let seed = match self.source {
+                    Source::Playlist(id) => id.as_bytes()[0],
+                    Source::Artist(id) => (id.0 & 0xff) as u8,
+                    Source::Library => 0,
+                };
+                let (a, b) = tile_gradient(seed);
+                gradient_fill(painter, cover, f32::from(theme::RADIUS), a, b);
+            }
+
+            let (eyebrow, name, count) = match self.source {
+                Source::Playlist(id) => (
+                    "PLAYLIST",
+                    self.playlists
+                        .iter()
+                        .find(|pl| pl.id == id)
+                        .map_or_else(String::new, |pl| pl.name.clone()),
+                    self.view.len(),
+                ),
+                Source::Artist(_) => (
+                    "ARTIST",
+                    self.artist_name.clone().unwrap_or_default(),
+                    self.view.len(),
+                ),
+                Source::Library => ("", String::new(), 0),
+            };
+            let tx = cover.right() + 16.0;
+            let tw = (hero.right() - 20.0 - tx).max(0.0);
+            painter.text(
+                pos2(tx, cover.top() + 3.0),
+                Align2::LEFT_TOP,
+                eyebrow,
+                theme::small(),
+                theme::DIM,
+            );
+            cell(
+                painter,
+                Rect::from_min_size(pos2(tx, cover.center().y - 17.0), vec2(tw, 34.0)),
+                &name,
+                theme::strong(24.0),
+                theme::TEXT,
+            );
+            painter.text(
+                pos2(tx, cover.bottom() - 2.0),
+                Align2::LEFT_BOTTOM,
+                format!("{count} tracks"),
+                theme::small(),
+                theme::DIM,
+            );
+        }
+
+        // Cabeçalho de colunas: rótulos apagados e uma régua de 1px.
+        let (header, _) = ui.allocate_exact_size(vec2(width, 22.0), Sense::hover());
         let painter = ui.painter();
         for (label, rect) in [
             ("#", cols.num(header)),
-            ("TÍTULO", cols.title(header)),
-            ("ARTISTA", cols.artist(header)),
-            ("ÁLBUM", cols.album(header)),
-            ("DUR", cols.duration(header)),
+            ("TITLE", cols.title(header)),
+            ("ARTIST", cols.artist(header)),
+            ("ALBUM", cols.album(header)),
+            ("TIME", cols.duration(header)),
         ] {
             // A coluna de capa não tem cabeçalho — imagem não precisa de
-            // rótulo, e "CAPA" ocuparia espaço sem informar nada.
+            // rótulo, e "COVER" ocuparia espaço sem informar nada.
             painter.text(
                 pos2(rect.left(), header.center().y),
                 Align2::LEFT_CENTER,
@@ -1160,8 +1506,8 @@ impl App {
         }
         painter.line_segment(
             [
-                pos2(header.left(), header.bottom() - 0.5),
-                pos2(header.right(), header.bottom() - 0.5),
+                pos2(header.left() + 6.0, header.bottom() - 0.5),
+                pos2(header.right() - 6.0, header.bottom() - 0.5),
             ],
             Stroke::new(1.0, theme::RULE),
         );
@@ -1217,6 +1563,7 @@ impl App {
                     if let Some(texture) =
                         row.art_hash.and_then(|hash| self.art.texture(&hash, false))
                     {
+                        image_shadow(painter, art_rect, theme::RADIUS_SM);
                         rounded_image(painter, art_rect, texture, theme::RADIUS_SM);
                     } else {
                         painter.rect_filled(
@@ -1227,17 +1574,31 @@ impl App {
                     }
 
                     let title_color = if is_playing {
-                        theme::ACCENT
+                        theme::ACCENT_BRIGHT
                     } else {
                         theme::TEXT
                     };
-                    cell(
-                        painter,
-                        cols.num(rect),
-                        &row.track_no.map_or_else(String::new, |n| n.to_string()),
-                        theme::mono(),
-                        theme::FAINT,
-                    );
+                    if is_playing {
+                        // No lugar do número da faixa: as barrinhas de "isto
+                        // está tocando", no acento — a mesma pista visual do
+                        // Spotify.
+                        let num = cols.num(rect);
+                        painter.text(
+                            pos2(num.left() + 4.0, num.center().y),
+                            Align2::LEFT_CENTER,
+                            theme::icon_glyph::AUDIO_LINES,
+                            theme::icon(13.0),
+                            theme::ACCENT_BRIGHT,
+                        );
+                    } else {
+                        cell(
+                            painter,
+                            cols.num(rect),
+                            &row.track_no.map_or_else(String::new, |n| n.to_string()),
+                            theme::mono(),
+                            theme::FAINT,
+                        );
+                    }
                     cell_strong(painter, cols.title(rect), &row.title, 13.0, title_color);
                     cell(
                         painter,
@@ -1274,14 +1635,14 @@ impl App {
                         if let Some((aid, aname)) = &artist
                             && !matches!(self.source, Source::Artist(id) if id == *aid)
                         {
-                            if ui.button(format!("Ver só faixas de {aname}")).clicked() {
+                            if ui.button(format!("Only tracks by {aname}")).clicked() {
                                 self.view_artist(*aid, aname.clone());
                                 ui.close();
                             }
                             ui.separator();
                         }
 
-                        ui.menu_button("Adicionar à playlist", |ui| {
+                        ui.menu_button("Add to playlist", |ui| {
                             for pl in &playlists {
                                 if ui.button(&pl.name).clicked() {
                                     self.add_to_playlist(pl.id, track);
@@ -1291,7 +1652,7 @@ impl App {
                             if !playlists.is_empty() {
                                 ui.separator();
                             }
-                            if ui.button("Nova playlist…").clicked() {
+                            if ui.button("New playlist…").clicked() {
                                 self.create_playlist(Some(track));
                                 ui.close();
                             }
@@ -1299,28 +1660,25 @@ impl App {
 
                         if matches!(source, Source::Playlist(_)) {
                             ui.separator();
-                            let up =
-                                ui.add_enabled(index > 0, egui::Button::new("Mover para cima"));
+                            let up = ui.add_enabled(index > 0, egui::Button::new("Move up"));
                             if up.clicked() {
                                 self.nudge_in_playlist(index, -1);
                                 ui.close();
                             }
-                            let down = ui.add_enabled(
-                                index + 1 < total,
-                                egui::Button::new("Mover para baixo"),
-                            );
+                            let down =
+                                ui.add_enabled(index + 1 < total, egui::Button::new("Move down"));
                             if down.clicked() {
                                 self.nudge_in_playlist(index, 1);
                                 ui.close();
                             }
-                            if ui.button("Remover da playlist").clicked() {
+                            if ui.button("Remove from playlist").clicked() {
                                 self.remove_from_playlist(index);
                                 ui.close();
                             }
                         }
 
                         ui.separator();
-                        if ui.button("Escolher capa do álbum…").clicked() {
+                        if ui.button("Choose album cover…").clicked() {
                             self.pick_album_art(track);
                             ui.close();
                         }
@@ -1339,32 +1697,56 @@ impl App {
     fn player_bar(&mut self, ui: &mut egui::Ui) {
         let state = self.engine.state();
         let full = ui.max_rect();
-        // Fio bem claro (branco quase transparente, não a régua escura de
-        // sempre) na borda de cima — separa o player do conteúdo por trás
-        // como se ele flutuasse um pouco à frente, não só a mudança de tom.
+        // Fio quase invisível na borda de cima — o mesmo do mockup
+        // (`rgba(255,255,255,.06)`): o player pousa sobre o vão um degrau à
+        // frente do conteúdo, sem uma régua dura marcando a divisa.
         ui.painter().line_segment(
             [full.left_top(), full.right_top()],
             Stroke::new(1.0, Color32::from_white_alpha(14)),
         );
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
+        // Três faixas de largura fixa nas pontas e o miolo no meio: o
+        // transporte fica centrado na JANELA, não no espaço que sobra depois
+        // da faixa tocando. Rects explícitos (não layout que "vai empurrando")
+        // porque centrar de verdade era o ponto.
+        let left_w = (full.width() * 0.30).clamp(240.0, 320.0);
+        let right_w = (full.width() * 0.26).clamp(170.0, 220.0);
+        let left_rect = Rect::from_min_max(full.min, pos2(full.left() + left_w, full.bottom()));
+        let right_rect = Rect::from_min_max(pos2(full.right() - right_w, full.top()), full.max);
+        let center_rect = Rect::from_min_max(
+            pos2(left_rect.right() + 12.0, full.top()),
+            pos2(right_rect.left() - 12.0, full.bottom()),
+        );
 
-            // Capa. Só aparece aqui e no modo compacto.
+        // ---- Esquerda: capa + faixa tocando ----
+        {
+            let mut ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(left_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            let ui = &mut ui;
+            ui.add_space(14.0);
             self.draw_cover(ui, 56.0);
-
-            ui.add_space(10.0);
+            ui.add_space(12.0);
             ui.vertical(|ui| {
-                ui.add_space(6.0);
+                ui.add_space(9.0);
                 match &self.now {
                     Some(row) => {
-                        ui.label(egui::RichText::new(&row.title).heading().color(theme::TEXT));
                         ui.label(
-                            egui::RichText::new(format!(
-                                "{}  ·  {}",
-                                row.artist.as_deref().unwrap_or("—"),
-                                row.album.as_deref().unwrap_or("—")
+                            egui::RichText::new(shorten(&row.title, 26))
+                                .font(theme::strong(13.0))
+                                .color(theme::TEXT),
+                        );
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(shorten(
+                                &format!(
+                                    "{}  ·  {}",
+                                    row.artist.as_deref().unwrap_or("—"),
+                                    row.album.as_deref().unwrap_or("—")
+                                ),
+                                36,
                             ))
                             .font(theme::small())
                             .color(theme::DIM),
@@ -1372,100 +1754,125 @@ impl App {
                     }
                     None => {
                         ui.label(
-                            egui::RichText::new("nada tocando")
+                            egui::RichText::new("Nothing playing")
                                 .font(theme::small())
                                 .color(theme::FAINT),
                         );
                     }
                 }
             });
+        }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(10.0);
-                if let Some(position) = self.queue.position() {
+        // ---- Centro: transporte por cima, progresso embaixo, os dois
+        // centrados horizontalmente em `center_rect` ----
+        {
+            let mut ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(center_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            let ui = &mut ui;
+            ui.add_space(((center_rect.height() - 60.0) * 0.5).max(0.0));
+
+            ui.allocate_ui_with_layout(
+                vec2(220.0, 34.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 13.0;
+                    if icon_toggle(ui, Icon::Shuffle, self.queue.shuffle())
+                        .on_hover_text("Shuffle (S)")
+                        .clicked()
+                    {
+                        let on = !self.queue.shuffle();
+                        self.queue.set_shuffle(on);
+                        self.queue_next();
+                    }
+                    if transport(ui, Glyph::Prev).clicked() {
+                        self.prev_track();
+                    }
+                    if transport_primary(ui, state.playing).clicked() {
+                        self.toggle_play();
+                    }
+                    if transport(ui, Glyph::Next).clicked() {
+                        self.next_track();
+                    }
+                    let repeat_hint = match self.queue.repeat() {
+                        Repeat::Off => "Repeat: off (R)",
+                        Repeat::All => "Repeat: all (R)",
+                        Repeat::One => "Repeat: one (R)",
+                    };
+                    if icon_toggle(
+                        ui,
+                        Icon::Repeat(self.queue.repeat() == Repeat::One),
+                        self.queue.repeat() != Repeat::Off,
+                    )
+                    .on_hover_text(repeat_hint)
+                    .clicked()
+                    {
+                        let mode = self.queue.repeat().next();
+                        self.queue.set_repeat(mode);
+                        self.queue_next();
+                    }
+                },
+            );
+
+            ui.add_space(9.0);
+            let bar_total = (center_rect.width() - 8.0).clamp(200.0, 520.0);
+            ui.allocate_ui_with_layout(
+                vec2(bar_total, 18.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
                     ui.label(
-                        egui::RichText::new(format!("{position} / {}", self.queue.len()))
+                        egui::RichText::new(format_duration(state.position))
                             .font(theme::mono())
                             .color(theme::FAINT),
                     );
-                    ui.add_space(10.0);
-                }
+                    let bar_w = (ui.available_width() - 48.0).max(80.0);
+                    self.progress_bar(ui, state, bar_w);
+                    ui.label(
+                        egui::RichText::new(
+                            state
+                                .duration
+                                .map_or_else(|| "--:--".into(), format_duration),
+                        )
+                        .font(theme::mono())
+                        .color(theme::FAINT),
+                    );
+                },
+            );
+        }
+
+        // ---- Direita: volume, modo compacto, posição na fila ----
+        {
+            let mut ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(right_rect)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            );
+            let ui = &mut ui;
+            ui.add_space(16.0);
+            if let Some(volume) = volume_slider(ui, self.engine.volume()) {
+                self.set_volume(volume);
+            }
+            ui.add_space(6.0);
+            glyph_label(ui, theme::icon_glyph::VOLUME, 14.0, theme::DIM);
+            ui.add_space(10.0);
+            if icon_toggle(ui, Icon::Mini, self.mini)
+                .on_hover_text("Compact mode (Ctrl+M)")
+                .clicked()
+            {
+                self.toggle_mini(ui.ctx());
+            }
+            if let Some(position) = self.queue.position() {
+                ui.add_space(10.0);
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} / {}",
-                        format_duration(state.position),
-                        state
-                            .duration
-                            .map_or_else(|| "--:--".into(), format_duration)
-                    ))
-                    .font(theme::mono())
-                    .color(theme::DIM),
+                    egui::RichText::new(format!("{position} / {}", self.queue.len()))
+                        .font(theme::mono())
+                        .color(theme::FAINT),
                 );
-
-                ui.add_space(10.0);
-                if let Some(volume) = volume_slider(ui, self.engine.volume()) {
-                    self.set_volume(volume);
-                }
-
-                ui.add_space(10.0);
-                // Ícones, não rótulo: aceso/apagado continua sendo a cor, o
-                // acento continua reservado pra "isto está tocando".
-                if icon_toggle(ui, Icon::Mini, self.mini)
-                    .on_hover_text("Modo compacto (Ctrl+M)")
-                    .clicked()
-                {
-                    self.toggle_mini(ui.ctx());
-                }
-                if icon_toggle(ui, Icon::Shuffle, self.queue.shuffle())
-                    .on_hover_text("Shuffle (S)")
-                    .clicked()
-                {
-                    let on = !self.queue.shuffle();
-                    self.queue.set_shuffle(on);
-                    self.queue_next();
-                }
-                let repeat_hint = match self.queue.repeat() {
-                    Repeat::Off => "Repetir: desligado (R)",
-                    Repeat::All => "Repetir: tudo (R)",
-                    Repeat::One => "Repetir: uma faixa (R)",
-                };
-                if icon_toggle(
-                    ui,
-                    Icon::Repeat(self.queue.repeat() == Repeat::One),
-                    self.queue.repeat() != Repeat::Off,
-                )
-                .on_hover_text(repeat_hint)
-                .clicked()
-                {
-                    let mode = self.queue.repeat().next();
-                    self.queue.set_repeat(mode);
-                    self.queue_next();
-                }
-
-                ui.add_space(10.0);
-                if transport(ui, Glyph::Next).clicked() {
-                    self.next_track();
-                }
-                if transport(
-                    ui,
-                    if state.playing {
-                        Glyph::Pause
-                    } else {
-                        Glyph::Play
-                    },
-                )
-                .clicked()
-                {
-                    self.toggle_play();
-                }
-                if transport(ui, Glyph::Prev).clicked() {
-                    self.prev_track();
-                }
-            });
-        });
-
-        ui.add_space(6.0);
-        self.progress_bar(ui, state);
+            }
+        }
     }
 
     /// Barra de progresso: trilho em pílula, igual ao slider de volume — o
@@ -1477,9 +1884,8 @@ impl App {
     /// clicar/arrastar em cima ou embaixo da linha, não só exatamente nela,
     /// continua funcionando — sem isso o alvo de clique real era de uns 12px,
     /// difícil de acertar de primeira.
-    fn progress_bar(&mut self, ui: &mut egui::Ui, state: player_audio::PlaybackState) {
+    fn progress_bar(&mut self, ui: &mut egui::Ui, state: player_audio::PlaybackState, width: f32) {
         const HIT_HEIGHT: f32 = 20.0;
-        let width = ui.available_width();
         let knob_radius = 5.0;
         let (rect, response) =
             ui.allocate_exact_size(vec2(width, HIT_HEIGHT), Sense::click_and_drag());
@@ -1551,14 +1957,23 @@ impl App {
             .and_then(|hash| self.art.texture(&hash, true));
         if let Some(texture) = texture {
             rounded_image(painter, cover, texture, radius);
-        } else {
-            painter.rect_stroke(
-                cover,
-                CornerRadius::same(radius),
-                Stroke::new(1.0, theme::RULE),
-                egui::StrokeKind::Inside,
-            );
         }
+        // Fio interno claríssimo em volta da capa — o mesmo `inset` do mockup.
+        // Some a borda dura contra o vão e dá um respiro entre a arte e o
+        // fundo preto do player, com capa ou sem.
+        painter.rect_stroke(
+            cover,
+            CornerRadius::same(radius),
+            Stroke::new(
+                1.0,
+                if texture.is_some() {
+                    Color32::from_white_alpha(20)
+                } else {
+                    theme::RULE
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
     }
 
     /// Janela compacta: capa, título/artista, transporte e progresso. Cabe
@@ -1599,7 +2014,7 @@ impl App {
                     }
                     None => {
                         ui.label(
-                            egui::RichText::new("nada tocando")
+                            egui::RichText::new("Nothing playing")
                                 .font(theme::small())
                                 .color(theme::FAINT),
                         );
@@ -1630,7 +2045,7 @@ impl App {
                 // Volta pra janela normal. Precisa estar sempre visível: é o
                 // único jeito de sair sem saber do atalho de cor.
                 if icon_toggle(ui, Icon::Mini, true)
-                    .on_hover_text("Sair do modo compacto (Ctrl+M)")
+                    .on_hover_text("Exit compact mode (Ctrl+M)")
                     .clicked()
                 {
                     self.toggle_mini(ui.ctx());
@@ -1640,7 +2055,8 @@ impl App {
         });
 
         ui.add_space(6.0);
-        self.progress_bar(ui, state);
+        let bar_w = ui.available_width() - 16.0;
+        self.progress_bar(ui, state, bar_w);
     }
 
     /// Alterna entre a janela normal e o modo compacto, redimensionando a
@@ -1760,6 +2176,24 @@ impl eframe::App for App {
         self.poll_watcher();
         self.shortcuts(ctx);
 
+        // O balãozinho de status é um aviso passageiro ("140 new…", "folder
+        // linked", um erro), não um rodapé permanente: some uns segundos
+        // depois de a mensagem parar de mudar. Detectar a mudança aqui num
+        // canto só evita carimbar a hora em cada `self.status = …`.
+        const STATUS_TTL: Duration = Duration::from_secs(6);
+        if self.status != self.status_prev {
+            self.status_prev = self.status.clone();
+            self.status_at = Instant::now();
+        }
+        if !self.status.is_empty() {
+            if self.status_at.elapsed() >= STATUS_TTL {
+                self.status.clear();
+                self.status_prev.clear();
+            } else {
+                ctx.request_repaint_after(STATUS_TTL - self.status_at.elapsed());
+            }
+        }
+
         if self.mini {
             // Modo compacto: a janela inteira é a barra do player, sem
             // topo, sidebar ou lista — é para isso que ela existe.
@@ -1767,41 +2201,81 @@ impl eframe::App for App {
                 .frame(egui::Frame::new().fill(theme::PANEL))
                 .show(ui, |ui| self.mini_bar(ui));
         } else {
+            // A barra de comando e a barra do player ficam sobre o vão
+            // (`BG`), sem fundo próprio — no espírito do Spotify, onde só a
+            // sidebar e o conteúdo são "cartões" e o resto é a moldura
+            // escura da janela.
             egui::Panel::top("comando")
-                .exact_size(34.0)
-                .frame(egui::Frame::new().fill(theme::PANEL))
+                .exact_size(46.0)
+                .frame(egui::Frame::new().fill(theme::BG))
                 .show(ui, |ui| self.top_bar(ui));
 
             egui::Panel::bottom("player")
-                .exact_size(92.0)
-                .frame(egui::Frame::new().fill(theme::PANEL))
+                .exact_size(88.0)
+                .frame(egui::Frame::new().fill(theme::BG))
                 .show(ui, |ui| self.player_bar(ui));
 
-            if !self.status.is_empty() {
-                egui::Panel::bottom("status")
-                    .exact_size(20.0)
-                    .frame(egui::Frame::new().fill(theme::BG))
-                    .show(ui, |ui| {
-                        ui.horizontal_centered(|ui| {
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new(&self.status)
-                                    .font(theme::small())
-                                    .color(theme::FAINT),
-                            );
-                        });
-                    });
-            }
+            // Sidebar e lista viram cartões arredondados: preenchimento
+            // `PANEL` (um degrau acima do vão), cantos `CARD_RADIUS`, um fio
+            // discreto no contorno pra o canto pegar luz, e uma folga
+            // separando um do outro e da borda da janela.
+            let card = |left: i8, right: i8| {
+                egui::Frame::new()
+                    .fill(theme::PANEL)
+                    .corner_radius(theme::CARD_RADIUS)
+                    .stroke(Stroke::new(1.0, theme::CARD_STROKE))
+                    .outer_margin(egui::Margin {
+                        left,
+                        right,
+                        top: 2,
+                        bottom: 6,
+                    })
+            };
 
             egui::Panel::left("sidebar")
-                .exact_size(170.0)
+                .exact_size(264.0)
                 .resizable(false)
-                .frame(egui::Frame::new().fill(theme::PANEL))
+                .frame(card(8, 4).inner_margin(egui::Margin {
+                    left: 0,
+                    right: 0,
+                    top: 6,
+                    bottom: 2,
+                }))
                 .show(ui, |ui| self.sidebar(ui));
 
             egui::CentralPanel::no_frame()
-                .frame(egui::Frame::new().fill(theme::BG))
+                .frame(card(4, 8).inner_margin(egui::Margin::ZERO))
                 .show(ui, |ui| self.list(ui));
+
+            // Status de scan / erro: um balãozinho flutuante no canto de
+            // baixo, não uma faixa de largura inteira com régua — essa faixa
+            // era uma das "linhas de divisão duras" que sobravam. Some sozinho
+            // no próximo scan.
+            if !self.status.is_empty() {
+                let content = ctx.content_rect();
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("status-toast"),
+                ));
+                let galley =
+                    painter.layout_no_wrap(self.status.clone(), theme::small(), theme::DIM);
+                let pad = vec2(12.0, 6.0);
+                let rect = Rect::from_min_size(
+                    pos2(
+                        content.left() + 284.0,
+                        content.bottom() - 88.0 - 12.0 - (galley.size().y + pad.y * 2.0),
+                    ),
+                    galley.size() + pad * 2.0,
+                );
+                painter.rect(
+                    rect,
+                    CornerRadius::same(theme::RADIUS),
+                    theme::ELEVATED,
+                    Stroke::new(1.0, theme::RULE),
+                    egui::StrokeKind::Inside,
+                );
+                painter.galley(rect.min + pad, galley, theme::DIM);
+            }
         }
 
         // Sem decoração nativa, a janela também perdeu o traço de 1px que o
@@ -1905,33 +2379,172 @@ impl Columns {
     }
 }
 
-/// Uma linha da sidebar: rótulo alinhado à esquerda, marca de acento quando
-/// ativa. Mesma linguagem visual da lista de faixas — a régua de 2px que
-/// destaca "o que está tocando" aqui destaca "o que está selecionado".
-fn sidebar_row(ui: &mut egui::Ui, label: &str, active: bool, indent: f32) -> egui::Response {
+/// Oito duplas de cor para a miniatura sem capa, escolhidas pelo primeiro
+/// byte do id — determinístico, então a mesma playlist tem sempre o mesmo
+/// gradiente. Metade puxa pro roxo da identidade, metade não, pra sidebar
+/// não virar um degradê monocromático.
+fn tile_gradient(seed: u8) -> (Color32, Color32) {
+    const G: [(Color32, Color32); 8] = [
+        (
+            Color32::from_rgb(0x7C, 0x5C, 0xFF),
+            Color32::from_rgb(0x3A, 0x1F, 0x8C),
+        ),
+        (
+            Color32::from_rgb(0x1F, 0x6F, 0x5C),
+            Color32::from_rgb(0x0B, 0x3B, 0x3F),
+        ),
+        (
+            Color32::from_rgb(0xB8, 0x42, 0x2F),
+            Color32::from_rgb(0x5A, 0x1F, 0x1F),
+        ),
+        (
+            Color32::from_rgb(0x2D, 0x5F, 0xB8),
+            Color32::from_rgb(0x12, 0x24, 0x4F),
+        ),
+        (
+            Color32::from_rgb(0xC2, 0x4D, 0x7E),
+            Color32::from_rgb(0x4B, 0x15, 0x28),
+        ),
+        (
+            Color32::from_rgb(0xD7, 0x9A, 0x2A),
+            Color32::from_rgb(0x5A, 0x38, 0x06),
+        ),
+        (
+            Color32::from_rgb(0x4B, 0x4F, 0x57),
+            Color32::from_rgb(0x1B, 0x1D, 0x22),
+        ),
+        (
+            Color32::from_rgb(0x59, 0x42, 0xB8),
+            Color32::from_rgb(0x24, 0x1D, 0x3F),
+        ),
+    ];
+    G[(seed % 8) as usize]
+}
+
+/// O que desenhar na miniatura de uma linha da sidebar.
+enum Tile {
+    /// Uma capa (escolhida pelo usuário, ou a da primeira faixa).
+    Image(egui::TextureId),
+    /// Mosaico 2×2 das capas das faixas — o fallback do Spotify quando a
+    /// playlist não tem uma capa só.
+    Mosaic([egui::TextureId; 4]),
+    /// Sem capa nenhuma: um gradiente determinístico, sempre o mesmo pra
+    /// aquela playlist, pra não ficar um buraco cinza.
+    Gradient(Color32, Color32),
+}
+
+/// Uma linha da sidebar no estilo Spotify: miniatura quadrada arredondada +
+/// nome + subtítulo ("Playlist · 42 tracks"). Fundo arredondado em hover, um
+/// degrau acima (`ELEVATED`) e nome no acento quando é a fonte aberta.
+fn sidebar_entry(
+    ui: &mut egui::Ui,
+    tile: &Tile,
+    title: &str,
+    subtitle: &str,
+    active: bool,
+    glyph: Option<char>,
+) -> egui::Response {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, theme::ROW_HEIGHT), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 54.0), Sense::click());
     let painter = ui.painter();
 
     if active || response.hovered() {
-        let highlight = rect.shrink2(vec2(4.0, 2.0));
-        painter.rect_filled(highlight, CornerRadius::same(theme::RADIUS), theme::HOVER);
-    }
-    if active {
+        let bg = if active {
+            theme::ELEVATED
+        } else {
+            theme::HOVER
+        };
         painter.rect_filled(
-            Rect::from_min_size(rect.left_top(), vec2(2.0, rect.height())),
-            CornerRadius::ZERO,
-            theme::ACCENT,
+            rect.shrink2(vec2(6.0, 3.0)),
+            CornerRadius::same(theme::RADIUS),
+            bg,
         );
     }
 
-    let color = if active { theme::ACCENT } else { theme::TEXT };
-    let left = rect.left() + 10.0 + indent;
-    let text_rect = Rect::from_min_size(
-        pos2(left, rect.top()),
-        vec2((rect.right() - 6.0 - left).max(0.0), rect.height()),
+    let thumb = Rect::from_min_size(
+        pos2(rect.left() + 14.0, rect.center().y - 21.0),
+        vec2(42.0, 42.0),
     );
-    cell(painter, text_rect, label, theme::body(), color);
+    let r = theme::RADIUS_SM;
+    image_shadow(painter, thumb, r);
+    match tile {
+        Tile::Image(tex) => rounded_image(painter, thumb, *tex, r),
+        Tile::Mosaic(t) => {
+            let h = thumb.width() / 2.0;
+            let q = |dx: f32, dy: f32| {
+                Rect::from_min_size(pos2(thumb.left() + dx, thumb.top() + dy), vec2(h, h))
+            };
+            rounded_image_cr(
+                painter,
+                q(0.0, 0.0),
+                t[0],
+                CornerRadius {
+                    nw: r,
+                    ne: 0,
+                    sw: 0,
+                    se: 0,
+                },
+            );
+            rounded_image_cr(
+                painter,
+                q(h, 0.0),
+                t[1],
+                CornerRadius {
+                    nw: 0,
+                    ne: r,
+                    sw: 0,
+                    se: 0,
+                },
+            );
+            rounded_image_cr(
+                painter,
+                q(0.0, h),
+                t[2],
+                CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: r,
+                    se: 0,
+                },
+            );
+            rounded_image_cr(
+                painter,
+                q(h, h),
+                t[3],
+                CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: 0,
+                    se: r,
+                },
+            );
+        }
+        Tile::Gradient(a, b) => {
+            gradient_fill(painter, thumb, f32::from(r), *a, *b);
+            if let Some(ch) = glyph {
+                painter.text(
+                    thumb.center(),
+                    Align2::CENTER_CENTER,
+                    ch,
+                    theme::icon(18.0),
+                    Color32::from_white_alpha(200),
+                );
+            }
+        }
+    }
+
+    let text_left = thumb.right() + 11.0;
+    let text_w = (rect.right() - 10.0 - text_left).max(0.0);
+    let title_rect =
+        Rect::from_min_size(pos2(text_left, rect.center().y - 15.0), vec2(text_w, 16.0));
+    let sub_rect = Rect::from_min_size(pos2(text_left, rect.center().y + 1.0), vec2(text_w, 14.0));
+    let title_color = if active {
+        theme::ACCENT_BRIGHT
+    } else {
+        theme::TEXT
+    };
+    cell(painter, title_rect, title, theme::strong(13.0), title_color);
+    cell(painter, sub_rect, subtitle, theme::small(), theme::DIM);
 
     response
 }
@@ -1942,8 +2555,33 @@ fn sidebar_row(ui: &mut egui::Ui, label: &str, active: bool, indent: f32) -> egu
 /// é essa combinação que faz a capa ficar arredondada sem cortar a imagem
 /// à mão.
 fn rounded_image(painter: &egui::Painter, rect: Rect, texture: egui::TextureId, radius: u8) {
-    let mut shape =
-        egui::epaint::RectShape::filled(rect, CornerRadius::same(radius), Color32::WHITE);
+    rounded_image_cr(painter, rect, texture, CornerRadius::same(radius));
+}
+
+/// Sombra difusa atrás de uma capa — o degrau que faz a arte "flutuar" sobre
+/// o cartão em vez de estar recortada nele. É a mesma ideia do `box-shadow`
+/// do mockup; como o `epaint::Shadow` só borra pra fora, desenha antes da
+/// imagem. Só vale a pena sobre o `PANEL` (claro): sobre o vão quase preto,
+/// preto sobre preto não aparece.
+fn image_shadow(painter: &egui::Painter, rect: Rect, radius: u8) {
+    let shadow = egui::epaint::Shadow {
+        offset: [0, 3],
+        blur: 12,
+        spread: 0,
+        color: Color32::from_black_alpha(120),
+    };
+    painter.add(shadow.as_shape(rect, CornerRadius::same(radius)));
+}
+
+/// Como [`rounded_image`], mas com raio por canto — o mosaico 2×2 arredonda
+/// só o canto externo de cada quadrante.
+fn rounded_image_cr(
+    painter: &egui::Painter,
+    rect: Rect,
+    texture: egui::TextureId,
+    corner_radius: CornerRadius,
+) {
+    let mut shape = egui::epaint::RectShape::filled(rect, corner_radius, Color32::WHITE);
     shape.brush = Some(std::sync::Arc::new(egui::epaint::Brush {
         fill_texture_id: texture,
         uv: Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
@@ -2302,6 +2940,72 @@ fn transport(ui: &mut egui::Ui, glyph: Glyph) -> egui::Response {
     response
 }
 
+/// O botão de play/pause central — círculo claro preenchido, glifo escuro,
+/// maior que os vizinhos. É o único controle da barra que "salta": no
+/// Spotify é o mesmo desenho, e faz sentido, é o que a mão procura primeiro.
+fn transport_primary(ui: &mut egui::Ui, playing: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::click());
+    let painter = ui.painter();
+
+    let fill = if response.hovered() {
+        Color32::WHITE
+    } else {
+        theme::TEXT
+    };
+    painter.circle_filled(rect.center(), 17.0, fill);
+    let ch = if playing {
+        theme::icon_glyph::PAUSE
+    } else {
+        theme::icon_glyph::PLAY
+    };
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        ch,
+        theme::icon(15.0),
+        theme::BG,
+    );
+
+    response
+}
+
+/// Pílula de alternância da sidebar ("Playlists" / "Artists"). Ativa = fundo
+/// claro, texto escuro (igual ao mockup); inativa = um degrau acima do
+/// cartão, texto apagado.
+fn chip(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(76.0, 24.0), Sense::click());
+    let painter = ui.painter();
+    let (bg, fg) = if active {
+        (theme::TEXT, theme::BG)
+    } else if response.hovered() {
+        (theme::HOVER, theme::TEXT)
+    } else {
+        (theme::ELEVATED, theme::DIM)
+    };
+    painter.rect_filled(rect, CornerRadius::same(12), bg);
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        theme::small(),
+        fg,
+    );
+    response
+}
+
+/// Um glifo da fonte de ícones como widget num layout — o `painter.text` dos
+/// outros botões não aloca espaço, e num `horizontal` isso desalinha o resto.
+fn glyph_label(ui: &mut egui::Ui, glyph: char, size: f32, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(size + 4.0, size + 4.0), Sense::hover());
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        glyph,
+        theme::icon(size),
+        color,
+    );
+}
+
 /// Botão de ícone genérico — o mesmo tratamento do transporte (fundo de
 /// hover arredondado, glifo neutro), pra qualquer glifo da fonte de ícones.
 /// Quem chama põe o `on_hover_text` explicando o que faz, já que sem rótulo
@@ -2334,6 +3038,28 @@ fn format_ms(ms: Option<u64>) -> String {
         || "--:--".into(),
         |ms| format_duration(Duration::from_millis(ms)),
     )
+}
+
+/// Hash de 32 bytes em hex — o formato em que a foto da biblioteca fica
+/// guardada no `meta` (que só aceita texto).
+fn hex_encode(hash: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    hash.iter().fold(String::with_capacity(64), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
+fn hex_decode(hex: &str) -> Option<[u8; 32]> {
+    let bytes = hex.trim();
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(bytes.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
 }
 
 fn format_duration(d: Duration) -> String {

@@ -119,6 +119,36 @@ pub fn by_artist(db: &Db, artist: ArtistId, sort: Sort) -> Result<Vec<TrackId>> 
     Ok(ids.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Um artista para a lista da sidebar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtistBrief {
+    pub id: ArtistId,
+    pub name: String,
+    /// Faixas locais em que ele é intérprete — o mesmo critério da linha
+    /// "Playlist · N tracks", pra a sidebar ler igual dos dois lados.
+    pub tracks: u64,
+}
+
+/// Artistas com ao menos uma faixa local, em ordem alfabética (pela chave
+/// dobrada, então acento e caixa não bagunçam a ordem).
+pub fn artists(db: &Db) -> Result<Vec<ArtistBrief>> {
+    let mut stmt = db.conn().prepare(
+        "SELECT ar.id, ar.name, count(t.id)
+         FROM artist ar
+         JOIN track t ON t.artist_id = ar.id
+         GROUP BY ar.id
+         ORDER BY ar.name_key",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(ArtistBrief {
+            id: ArtistId(row.get(0)?),
+            name: row.get(1)?,
+            tracks: row.get::<_, i64>(2)? as u64,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Traduz o que o usuário digitou numa expressão FTS5 segura.
 ///
 /// Cada palavra vira um termo com prefixo (`palavra*`), e todas precisam

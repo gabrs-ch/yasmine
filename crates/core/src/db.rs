@@ -5,7 +5,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 /// Versão do schema gravada em `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
@@ -126,6 +126,14 @@ impl Db {
                  ) STRICT;
                  CREATE INDEX playlist_folder_by_root ON playlist_folder (root_id, rel_prefix);",
             )?;
+        }
+        if version < 4 {
+            // Capa da playlist escolhida pelo usuário: o BLAKE3 do blob (as
+            // miniaturas ficam no mesmo cache em disco das capas de álbum).
+            // NULL = sem capa própria, a UI cai na capa da primeira faixa.
+            // Coluna na tabela `playlist`, então viaja no mesmo LWW do resto
+            // da linha no sync.
+            tx.execute_batch("ALTER TABLE playlist ADD COLUMN image_hash BLOB;")?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;

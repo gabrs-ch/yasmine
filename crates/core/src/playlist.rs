@@ -31,6 +31,9 @@ pub struct Playlist {
     /// Itens na playlist, incluindo os que ainda não têm arquivo local.
     pub items: usize,
     pub updated_at: i64,
+    /// Capa escolhida pelo usuário (BLAKE3 do blob; miniaturas no cache de
+    /// capas). `None` = a UI usa a capa da primeira faixa, ver [`cover_hashes`].
+    pub image_hash: Option<[u8; 32]>,
 }
 
 /// Um item da playlist. `track` é `None` quando o arquivo não está aqui.
@@ -124,7 +127,8 @@ fn touch(db: &Db, id: Uuid) -> Result<()> {
 pub fn all(db: &Db) -> Result<Vec<Playlist>> {
     let mut stmt = db.conn().prepare(
         "SELECT p.id, p.name, p.updated_at,
-                (SELECT count(*) FROM playlist_item i WHERE i.playlist_id = p.id)
+                (SELECT count(*) FROM playlist_item i WHERE i.playlist_id = p.id),
+                p.image_hash
          FROM playlist p
          WHERE p.deleted = 0
          ORDER BY p.updated_at DESC",
@@ -136,9 +140,54 @@ pub fn all(db: &Db) -> Result<Vec<Playlist>> {
             name: row.get(1)?,
             updated_at: row.get(2)?,
             items: row.get::<_, i64>(3)? as usize,
+            image_hash: row
+                .get::<_, Option<Vec<u8>>>(4)?
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()),
         })
     })?;
     rows.collect::<rusqlite::Result<_>>().map_err(Error::from)
+}
+
+/// Aponta (ou tira, com `None`) a capa própria da playlist. Carimba a linha
+/// como qualquer outra edição — a capa viaja no mesmo LWW do sync.
+pub fn set_image(db: &Db, id: Uuid, hash: Option<&[u8; 32]>) -> Result<()> {
+    let device = self_device(db)?;
+    db.conn().execute(
+        "UPDATE playlist SET image_hash = ?1, updated_at = ?2, origin = ?3 WHERE id = ?4",
+        rusqlite::params![
+            hash.map(|h| h.as_slice()),
+            now_ms(),
+            device.0.as_slice(),
+            id.as_bytes().as_slice()
+        ],
+    )?;
+    Ok(())
+}
+
+/// Até quatro capas distintas das faixas da playlist, na ordem em que
+/// aparecem — a capa automática (uma imagem, ou o mosaico de quatro) que a UI
+/// mostra quando a playlist não tem capa própria. Faixa sem arquivo local ou
+/// sem capa simplesmente não entra.
+pub fn cover_hashes(db: &Db, id: Uuid) -> Result<Vec<[u8; 32]>> {
+    let mut stmt = db.conn().prepare_cached(
+        "SELECT ca.blob_hash
+         FROM playlist_item i
+         JOIN track t       ON t.content_hash = i.track_key
+         JOIN album al      ON al.id = t.album_id
+         JOIN cover_art ca  ON ca.id = al.art_id
+         WHERE i.playlist_id = ?1
+         GROUP BY ca.blob_hash
+         ORDER BY min(i.position)
+         LIMIT 4",
+    )?;
+    let rows = stmt.query_map([id.as_bytes().as_slice()], |row| row.get::<_, Vec<u8>>(0))?;
+    let mut out = Vec::new();
+    for blob in rows {
+        if let Ok(hash) = <[u8; 32]>::try_from(blob?.as_slice()) {
+            out.push(hash);
+        }
+    }
+    Ok(out)
 }
 
 /// Itens na ordem, com a faixa local resolvida quando existe.
@@ -259,7 +308,7 @@ mod tests {
     use crate::art::ArtCache;
     use crate::library::{Sort, view};
     use crate::scan::scan;
-    use crate::testutil::{ambiente, escreve};
+    use crate::testutil::{ambiente, escreve, png};
 
     fn biblioteca(nome: &str, faixas: usize) -> (Db, crate::testutil::Ambiente) {
         let env = ambiente(nome);
@@ -444,5 +493,59 @@ mod tests {
             .query_row("SELECT count(*) FROM device", [], |r| r.get(0))
             .expect("consultar");
         assert_eq!(linhas, 1);
+    }
+
+    #[test]
+    fn capa_propria_grava_e_apaga() {
+        let (db, _env) = biblioteca("capa-propria", 1);
+        let id = create(&db, "Com capa").expect("criar");
+        assert_eq!(all(&db).expect("listar")[0].image_hash, None);
+
+        let hash = [7u8; 32];
+        set_image(&db, id, Some(&hash)).expect("gravar capa");
+        assert_eq!(all(&db).expect("listar")[0].image_hash, Some(hash));
+
+        set_image(&db, id, None).expect("apagar capa");
+        assert_eq!(all(&db).expect("listar")[0].image_hash, None);
+    }
+
+    #[test]
+    fn cover_hashes_traz_as_capas_das_faixas_sem_repetir() {
+        let env = ambiente("cover-hashes");
+        let capa_a = png([200, 40, 40]);
+        let capa_b = png([40, 80, 200]);
+        escreve(
+            &env.musica.join("a/01.mp3"),
+            "A1",
+            "Art",
+            "Álbum A",
+            Some(&capa_a),
+        );
+        escreve(
+            &env.musica.join("a/02.mp3"),
+            "A2",
+            "Art",
+            "Álbum A",
+            Some(&capa_a),
+        );
+        escreve(
+            &env.musica.join("b/01.mp3"),
+            "B1",
+            "Art",
+            "Álbum B",
+            Some(&capa_b),
+        );
+        let mut db = Db::open_in_memory().expect("abrir");
+        let art = ArtCache::new(env.cache.clone());
+        scan(&mut db, &env.musica, &art).expect("escanear");
+
+        let faixas = view(&db, Sort::ArtistAlbum).expect("view");
+        let id = create(&db, "Mix").expect("criar");
+        append(&mut db, id, &faixas).expect("acrescentar");
+
+        // Duas faixas do Álbum A, uma do B: duas capas distintas, sem repetir.
+        let capas = cover_hashes(&db, id).expect("capas");
+        assert_eq!(capas.len(), 2);
+        assert_ne!(capas[0], capas[1]);
     }
 }

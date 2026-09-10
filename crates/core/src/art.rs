@@ -17,7 +17,7 @@
 //! deixam o `readdir` lento em alguns sistemas de arquivos.
 //!
 //! **JPEG, não WebP.** O WebP do crate `image` só codifica sem perda, e uma
-//! capa 512px sem perda fica maior que o JPEG de qualidade 90 e mais cara pra
+//! capa 512px sem perda fica maior que o JPEG de qualidade 92 e mais cara pra
 //! decodificar na hora de desenhar a lista.
 //!
 //! **Reamostragem Lanczos3, não amostragem por caixa.** A redução acontece
@@ -44,7 +44,7 @@ use crate::db::{Db, Result};
 /// tempo de decodificação na hora de desenhar.
 pub const THUMB_SIZES: [u32; 2] = [96, 512];
 
-const JPEG_QUALITY: u8 = 90;
+const JPEG_QUALITY: u8 = 92;
 
 /// Entrada para semear o cache: hash da capa e dimensões do original.
 pub type KnownArt = ([u8; 32], (u32, u32));
