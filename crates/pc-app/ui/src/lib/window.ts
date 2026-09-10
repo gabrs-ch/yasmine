@@ -12,9 +12,9 @@ export const appWindow = {
   close: () => (inTauri ? getCurrentWindow().close() : Promise.resolve()),
 };
 
-// Os WMs (xfwm4, KWin) não deixam a janela ficar abaixo de ~200px de altura,
-// então pedimos ~340×200 e o MiniBar preenche isso como um player compacto.
-const MINI = { w: 340, h: 200 };
+// Uma faixa larga e baixa (não um quadrado). Se o WM impuser um piso de
+// altura maior que isso, o MiniBar centraliza o conteúdo e não fica vão.
+const MINI = { w: 560, h: 104 };
 const NORMAL_MIN = { w: 640, h: 480 };
 
 /** Encolhe a janela pro modo compacto; devolve o tamanho normal pra restaurar. */

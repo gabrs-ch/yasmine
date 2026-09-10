@@ -854,7 +854,10 @@ body {
 .rh-sw { bottom: 0; left: 0; width: 8px; height: 8px; cursor: nesw-resize; }
 .rh-se { bottom: 0; right: 0; width: 8px; height: 8px; cursor: nwse-resize; }
 
-/* ---- modo compacto ---- */
+/* ---- modo compacto ----
+   Uma faixa larga e baixa: capa à esquerda, título + progresso no meio,
+   transporte à direita. O conteúdo centraliza na vertical, então mesmo
+   que o WM imponha um piso de altura maior não sobra vão preto. */
 .mini-win {
   border-radius: 10px;
 }
@@ -862,19 +865,19 @@ body {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 12px;
-  padding: 14px 16px;
+  flex-direction: row;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 14px;
   background: var(--ground);
   position: relative;
 }
 .mini-exit {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 22px;
-  height: 22px;
+  top: 5px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -886,24 +889,18 @@ body {
   color: var(--text);
 }
 .mini-exit svg {
-  width: 14px;
-  height: 14px;
-}
-.mini-top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
+  width: 13px;
+  height: 13px;
 }
 .mini-cover {
-  width: 56px;
-  height: 56px;
+  width: 60px;
+  height: 60px;
   border-radius: 8px;
   flex: none;
   overflow: hidden;
   position: relative;
   transform: translateZ(0);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 5px 14px -6px rgba(0, 0, 0, 0.6);
 }
 .mini-cover img {
   position: absolute;
@@ -913,13 +910,16 @@ body {
   object-fit: cover;
   border-radius: inherit;
 }
-.mini-txt {
+.mini-mid {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .mini-title {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -931,33 +931,31 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 2px;
+  margin-top: -3px;
 }
 .mini-bar {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
 }
 .mini-bar .time {
-  font-size: 10px;
+  font-size: 9.5px;
 }
 .mini-transport {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 20px;
+  gap: 12px;
+  flex: none;
+  padding-right: 4px;
 }
 .mini-transport .playbtn {
   width: 32px;
   height: 32px;
 }
 .mini-transport .playbtn svg {
-  width: 15px;
-  height: 15px;
-}
-.mini-transport .tbtn svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 .mini-transport .tbtn svg {
   width: 15px;
