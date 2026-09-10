@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/audio",
     "crates/sync",
+    "crates/sync-host",
     "crates/pc-app",
     "crates/android-ffi",
     "tools/libgen",
@@ -18,7 +19,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 player-core = { path = "crates/core" }
 player-audio = { path = "crates/audio" }
-player-sync = { path = "crates/sync" }
+yasmine-sync = { path = "crates/sync" }
 
 blake3 = "1"
 cpal = "0.16"
@@ -33,6 +34,18 @@ rusqlite = { version = "0.37", features = ["bundled", "blob", "backup", "array"]
 symphonia = { version = "0.5", features = ["all"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "v7"] }
+
+# Sync na LAN (crates/sync, sync-host, android-ffi). `snow` no resolver
+# RustCrypto puro (sem `ring`): cross-compila pro NDK sem toolchain C.
+# Padrão Noise_IK_25519_ChaChaPoly_BLAKE2s.
+snow = "0.9"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+getrandom = "0.2"
+mdns-sd = "0.11"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+data-encoding = "2"
+form_urlencoded = "1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

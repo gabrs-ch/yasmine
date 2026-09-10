@@ -1,12 +1,29 @@
 [package]
-name = "player-android-ffi"
+name = "yasmine-android-ffi"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
+
+[lib]
+name = "yasmine_ffi"
+# cdylib: o `.so` que o Android carrega. lib: pra o bin uniffi-bindgen linkar.
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
 player-core.workspace = true
+yasmine-sync.workspace = true
+
+data-encoding.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+uniffi = { version = "0.28", features = ["cli"] }
+uuid.workspace = true
 
 [lints]
 workspace = true

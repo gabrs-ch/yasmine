@@ -1,12 +1,17 @@
 # Contexto pro app Android e o sync local
 
+> **Nota (atualização):** este documento era o *handoff* — o mapa pra
+> escrever o Android e o sync antes de eles existirem. Hoje estão
+> implementados no mesmo repo: `crates/{sync,sync-host,android-ffi}` +
+> `android/`. Estado atual e detalhes: [`docs/protocolo-sync.md`](protocolo-sync.md),
+> [`docs/decisoes-fase-4.md`](decisoes-fase-4.md), [`docs/teste-sync.md`](teste-sync.md).
+> O schema está em **v5** (`playlist_item` ganhou túmulo `deleted`/`deleted_at`);
+> as menções a "v3" e "stubs" abaixo são do texto original.
+
 Documento de handoff. Descreve o que o Yasmine é, como o lado PC foi
 construído, e o que o app Android precisa fazer — com foco no recurso que
 motiva ele existir: **parear PC e celular na mesma rede local por QR code e
 baixar pro celular as músicas que estão na biblioteca do computador.**
-
-Nada aqui é código novo. É o mapa pra quem for escrever o Android sem ter
-acompanhado o desenvolvimento do PC.
 
 ---
 

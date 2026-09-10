@@ -10,3 +10,20 @@ crates/pc-app/ui/node_modules
 crates/pc-app/ui/dist
 crates/pc-app/ui/*.tsbuildinfo
 crates/pc-app/gen/
+
+# app Android (android/)
+android/.gradle
+android/build
+android/app/build
+android/local.properties
+android/.idea/
+android/captures/
+android/app/src/main/jniLibs/
+android/app/build/generated/
+*.apk
+*.keystore
+
+# toolchain Android instalada rootless por scripts/setup-android.sh
+/.toolchain-env.sh
+/.yasmine-android/
+/.toolchain/

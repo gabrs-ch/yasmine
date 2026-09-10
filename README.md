@@ -62,15 +62,19 @@ cargo tauri build   --config crates/pc-app/tauri.conf.json   # empacotar
 
 | Crate | Papel |
 |---|---|
-| `crates/core` | Modelo, schema, índice. Único crate compartilhado entre PC e Android. |
+| `crates/core` | Modelo, schema, índice. Compartilhado entre PC e Android. |
 | `crates/audio` | Decode e playback no PC (`cpal` + `symphonia`). Não vai pro Android. |
-| `crates/sync` | Pareamento, mDNS, canal Noise, sync. Isolado: é o único que fala com a rede. |
+| `crates/sync` | Pareamento por QR, mDNS, canal Noise, protocolo de transferência, merge CRDT. Isolado: é o único que fala com a rede. |
+| `crates/sync-host` | Binário do lado PC (`yasmine-sync-host`): mostra o QR e serve a biblioteca pro celular. |
 | `crates/pc-app` | App desktop: back Rust (Tauri 2) + front web em `ui/` (React/TS). |
-| `crates/android-ffi` | Bindings Kotlin via uniffi. |
+| `crates/android-ffi` | Ponte uniffi (`YasmineLibrary` + `Syncer`) → Kotlin. |
+| `android/` | App Android (Kotlin/Compose + ExoPlayer + CameraX). `scripts/build-apk.sh`. |
 | `tools/libgen` | Gerador de biblioteca sintética para medição. |
 
-O binário final chama-se `yasmine`; os crates internos mantêm o prefixo
-`player-*` — são identificadores de implementação, não aparecem pro usuário.
+O binário do player chama-se `yasmine`; o do host de sync,
+`yasmine-sync-host`. O sync local (PC ↔ Android por QR) é a
+[Fase 4](docs/decisoes-fase-4.md) — [protocolo de fio](docs/protocolo-sync.md),
+[como testar](docs/teste-sync.md).
 
 ## Decisões fechadas
 

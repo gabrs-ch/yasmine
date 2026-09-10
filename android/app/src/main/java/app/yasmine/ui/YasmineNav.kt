@@ -1,0 +1,85 @@
+package app.yasmine.ui
+
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.Modifier
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import app.yasmine.playback.rememberPlayerConnection
+import app.yasmine.ui.library.LibraryScreen
+import app.yasmine.ui.pair.PairScreen
+import app.yasmine.ui.player.NowPlayingBar
+import app.yasmine.ui.playlists.PlaylistsScreen
+
+private enum class Tab(val route: String, val label: String) {
+    Library("library", "Biblioteca"),
+    Playlists("playlists", "Playlists"),
+    Pair("pair", "Parear"),
+}
+
+@Composable
+fun YasmineNav() {
+    val nav = rememberNavController()
+    val player = rememberPlayerConnection()
+    val backStack by nav.currentBackStackEntryAsState()
+    val current = backStack?.destination
+
+    Scaffold(
+        bottomBar = {
+            Column {
+                NowPlayingBar(player)
+                NavigationBar {
+                    Tab.entries.forEach { tab ->
+                        val selected = current?.hierarchy?.any { it.route == tab.route } == true
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                nav.navigate(tab.route) {
+                                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = {
+                                Icon(
+                                    when (tab) {
+                                        Tab.Library -> Icons.Filled.LibraryMusic
+                                        Tab.Playlists -> Icons.AutoMirrored.Filled.QueueMusic
+                                        Tab.Pair -> Icons.Filled.QrCodeScanner
+                                    },
+                                    contentDescription = tab.label,
+                                )
+                            },
+                            label = { Text(tab.label) },
+                        )
+                    }
+                }
+            }
+        },
+    ) { padding ->
+        NavHost(
+            navController = nav,
+            startDestination = Tab.Library.route,
+            modifier = Modifier.padding(padding),
+        ) {
+            composable(Tab.Library.route) { LibraryScreen(player) }
+            composable(Tab.Playlists.route) { PlaylistsScreen(player) }
+            composable(Tab.Pair.route) { PairScreen() }
+        }
+    }
+}

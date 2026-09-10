@@ -1,0 +1,35 @@
+[package]
+name = "yasmine-sync-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "yasmine-sync-host"
+path = "src/main.rs"
+
+[features]
+# GUI opcional: janela egui que mostra o QR grande e o progresso. Sem ela o
+# binário é só CLI (imprime o QR no terminal).
+default = []
+gui = ["dep:eframe"]
+
+[dependencies]
+player-core.workspace = true
+yasmine-sync.workspace = true
+
+directories = "6"
+qrcode = { version = "0.14", default-features = false }
+rusqlite.workspace = true
+
+eframe = { version = "0.36", default-features = false, features = [
+    "glow",
+    "default_fonts",
+    "x11",
+    "wayland",
+], optional = true }
+
+[lints]
+workspace = true

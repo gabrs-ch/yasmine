@@ -1,0 +1,4 @@
+# Copie para local.properties e ajuste (o Android Studio costuma criar sozinho).
+# Se usou scripts/setup-android.sh, aponte pra toolchain local:
+sdk.dir=../.toolchain/android-sdk
+# ndk.dir é descoberto pelo AGP a partir de ndk;<versão> no SDK.
