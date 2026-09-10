@@ -376,8 +376,8 @@ faixa — na lista e na barra do player — usa peso de verdade (`theme::strong`
 a família SemiBold), não o texto desenhado duas vezes com deslocamento que
 fingia negrito antes de ter fonte com peso no binário.
 
-**A marca do Yasmine** é uma nota musical brotando folhas, num quadrado
-arredondado roxo com gradiente e brilho — arte fornecida pelo usuário, no
+**A marca do Yasmine** é uma nota musical brotando folhas, roxa com
+gradiente, num quadrado arredondado claro — arte fornecida pelo usuário, no
 formato de ícone de app.
 [`assets/icon-256.png`](crates/pc-app/assets/icon-256.png) é o arquivo único
 — janela, atalho da área de trabalho e tela de boas-vindas do app carregam
