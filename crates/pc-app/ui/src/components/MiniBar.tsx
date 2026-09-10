@@ -1,33 +1,88 @@
+import { useRef, useState } from "react";
 import { artUrl } from "../lib/api";
 import { useStore } from "../store";
 import { coverClass } from "./Thumb";
 import { PrevIcon, NextIcon, PlayIcon, PauseIcon, PictureInPicture2 } from "./icons";
 
-/* Modo compacto: a janela inteira é uma barrinha — capa, faixa, transporte.
-   `data-tauri-drag-region` na área livre move a janela (sem decoração). */
+function fmt(ms: number | null): string {
+  if (ms == null) return "--:--";
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/* Modo compacto: os WMs (xfwm4, KWin) não deixam a janela ficar mais baixa
+   que ~200px, então em vez de uma tira fina com um vão preto enorme, isto é
+   um player compacto de verdade — capa, faixa, progresso e transporte,
+   preenchendo o espaço. Área livre arrasta a janela (`data-tauri-drag-region`). */
 export function MiniBar() {
   const pb = useStore((s) => s.playback);
   const playPause = useStore((s) => s.playPause);
   const next = useStore((s) => s.next);
   const prev = useStore((s) => s.prev);
+  const seek = useStore((s) => s.seek);
   const toggleMini = useStore((s) => s.toggleMini);
+
   const now = pb?.now ?? null;
+  const dur = pb?.durationMs ?? null;
+  const pos = pb?.positionMs ?? 0;
+  const frac = dur ? Math.min(1, pos / dur) : 0;
+
+  const lineRef = useRef<HTMLSpanElement>(null);
+  const [drag, setDrag] = useState<number | null>(null);
+  const shown = drag ?? frac;
+  const fracFrom = (clientX: number) => {
+    const r = lineRef.current!.getBoundingClientRect();
+    return Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+  };
 
   return (
     <div className="mini" data-tauri-drag-region>
-      <div className={`mini-cover ${coverClass(now?.art ?? "x")}`}>
-        {now?.art && (
-          <img
-            src={artUrl(now.art, 96)}
-            alt=""
-            onError={(e) => (e.currentTarget.style.display = "none")}
-          />
-        )}
+      <button className="mini-exit" type="button" title="Exit compact mode" onClick={() => void toggleMini()}>
+        <PictureInPicture2 />
+      </button>
+
+      <div className="mini-top" data-tauri-drag-region>
+        <div className={`mini-cover ${coverClass(now?.art ?? "x")}`}>
+          {now?.art && (
+            <img
+              src={artUrl(now.art, 96)}
+              alt=""
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
+          )}
+        </div>
+        <div className="mini-txt" data-tauri-drag-region>
+          <div className="mini-title">{now?.title ?? "Nothing playing"}</div>
+          <div className="mini-sub">
+            {now ? (now.artist ?? "—") + (now.album ? ` · ${now.album}` : "") : ""}
+          </div>
+        </div>
       </div>
-      <div className="mini-txt" data-tauri-drag-region>
-        <div className="mini-title">{now?.title ?? "Nothing playing"}</div>
-        <div className="mini-sub">{now?.artist ?? ""}</div>
+
+      <div className="mini-bar">
+        <span className="time">{fmt(now ? pos : null)}</span>
+        <span
+          ref={lineRef}
+          className="track-line"
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setDrag(fracFrom(e.clientX));
+          }}
+          onPointerMove={(e) => drag !== null && setDrag(fracFrom(e.clientX))}
+          onPointerUp={(e) => {
+            if (drag === null) return;
+            const f = fracFrom(e.clientX);
+            setDrag(null);
+            if (dur) void seek(f * dur);
+          }}
+          onPointerCancel={() => setDrag(null)}
+        >
+          <span className="track-fill" style={{ width: `${shown * 100}%` }} />
+          <span className="track-knob" style={{ left: `${shown * 100}%` }} />
+        </span>
+        <span className="time">{fmt(dur)}</span>
       </div>
+
       <div className="mini-transport">
         <button className="tbtn" type="button" title="Previous" onClick={() => void prev()}>
           <PrevIcon />
@@ -42,14 +97,6 @@ export function MiniBar() {
         </button>
         <button className="tbtn" type="button" title="Next" onClick={() => void next()}>
           <NextIcon />
-        </button>
-        <button
-          className="tbtn"
-          type="button"
-          title="Exit compact mode"
-          onClick={() => void toggleMini()}
-        >
-          <PictureInPicture2 />
         </button>
       </div>
     </div>

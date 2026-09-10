@@ -1,24 +1,15 @@
 # Ajustes pendentes da UI
 
-## Feito (no branch, aguardando build/tag)
+Tudo do último lote foi feito (v0.5.3):
 
-- **Equalizer para quando pausa.** `<Equalizer paused>` + `.eq.paused i`
-  (barras baixas, `animation: none`). Casado com `playback.playing`.
-- **Mutar no ícone de volume.** Ícone vira `<button>` → `toggleMute`
-  (guarda o volume anterior num módulo). `VolumeX` quando mudo.
-- **Bolinha na barra de volume** ao passar o mouse (`knob` no `<Scrubber>`
-  + `.vol-line:hover .track-knob`).
-- **Título/álbum do now-playing usa mais largura.** `.np` e `.right` viram
-  `flex: 1 1 0` (crescem igual → transporte segue centrado); `.bar` fixa em
-  `min(560px, 42vw)`. Só corta quando encostaria no transporte.
-
-## Pendente
-
-- **Modo compacto ainda deixa a janela "grossa"** no KWin do usuário. O
-  v0.5.2 já sai de fullscreen/maximizado antes e fixa min=max=tamanho, mas
-  não bastou. Preciso de: print da janela mini + `xdotool
-  getwindowgeometry` dela ativa, pra saber se é piso do WM, sombra CSD ou
-  conteúdo não preenchendo.
+- Equalizer para quando pausa.
+- Mutar clicando no ícone de volume (`VolumeX` quando mudo).
+- Bolinha na barra de volume no hover.
+- Título/álbum do now-playing usa mais largura (`.np`/`.right` flex 1 1 0).
+- Modo compacto: os WMs (xfwm4/KWin) não deixam a janela abaixo de ~200px
+  de altura — em vez de tira fina com vão preto, o MiniBar virou um player
+  compacto de verdade (capa 56px, faixa, progresso, transporte) que
+  preenche o espaço.
 
 ## Depois (maior)
 
