@@ -46,6 +46,12 @@ fun QrScanner(modifier: Modifier = Modifier, onQr: (String) -> Unit) {
         factory = { ctx ->
             val previewView = PreviewView(ctx).apply {
                 scaleType = PreviewView.ScaleType.FILL_CENTER
+                // COMPATIBLE usa TextureView: compõe na hierarquia de views e
+                // respeita clip/scroll/z-order do Compose. O padrão
+                // (PERFORMANCE / SurfaceView) desenha numa surface separada
+                // que o sistema joga por cima dos irmãos — era o motivo do
+                // campo de texto aparecer atrás/sobre a câmera.
+                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
             }
             val providerFuture = ProcessCameraProvider.getInstance(ctx)
             providerFuture.addListener({

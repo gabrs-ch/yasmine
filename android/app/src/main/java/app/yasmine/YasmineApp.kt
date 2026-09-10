@@ -2,6 +2,7 @@ package app.yasmine
 
 import android.app.Application
 import app.yasmine.data.LibraryRepository
+import app.yasmine.sync.SyncService
 
 /**
  * Segura os singletons de longa vida: o repositório da biblioteca (que
@@ -20,5 +21,6 @@ class YasmineApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        SyncService.ensureChannel(this)
     }
 }

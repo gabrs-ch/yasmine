@@ -77,8 +77,8 @@ android {
         applicationId = "app.yasmine"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.5.7"
         ndk { abiFilters += abis }
     }
 
@@ -148,6 +148,8 @@ dependencies {
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.view)
     implementation(libs.mlkit.barcode.scanning)
+
+    implementation(libs.coil.compose)
 
     // Runtime da FFI uniffi no Android.
     implementation("${libs.jna.get().module}:${libs.jna.get().version}@aar")

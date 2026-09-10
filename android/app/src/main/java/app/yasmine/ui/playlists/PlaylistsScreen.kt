@@ -3,9 +3,13 @@ package app.yasmine.ui.playlists
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -13,7 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,18 +37,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.yasmine.YasmineApp
 import app.yasmine.playback.PlayerConnection
+import app.yasmine.ui.common.Cover
 import kotlinx.coroutines.launch
 import uniffi.yasmine_ffi.PlaylistFfi
-import uniffi.yasmine_ffi.SortFfi
 
 @Composable
 fun PlaylistsScreen(player: PlayerConnection) {
     val repo = (LocalContext.current.applicationContext as YasmineApp).repo
     val scope = rememberCoroutineScope()
     val revision by repo.revision.collectAsState()
+    val scheme = MaterialTheme.colorScheme
 
     var playlists by remember { mutableStateOf<List<PlaylistFfi>>(emptyList()) }
     var open by remember { mutableStateOf<PlaylistFfi?>(null) }
@@ -59,36 +67,35 @@ fun PlaylistsScreen(player: PlayerConnection) {
     }
 
     Scaffold(
+        containerColor = scheme.background,
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { creating = true },
+                containerColor = scheme.primary,
+                contentColor = scheme.onPrimary,
                 icon = { Icon(Icons.Filled.Add, null) },
-                text = { Text("Nova") },
+                text = { Text("New") },
             )
         },
     ) { padding ->
-        if (playlists.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), Alignment.Center) {
-                Text(
-                    "Sem playlists.\nAs que vierem no sync aparecem aqui.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        } else {
-            LazyColumn(Modifier.fillMaxSize().padding(padding)) {
-                items(playlists, key = { it.id }) { pl ->
-                    Column(
-                        Modifier.fillMaxWidth().clickable { open = pl }.padding(16.dp),
-                    ) {
-                        Text(pl.name, style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "${pl.items} faixas",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp)) {
+            Text(
+                "Playlists",
+                style = MaterialTheme.typography.titleLarge,
+                color = scheme.onSurface,
+                modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
+            )
+            if (playlists.isEmpty()) {
+                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Text(
+                        "No playlists yet.\nThe ones that arrive from a sync show up here.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(playlists, key = { it.id }) { pl -> PlaylistRow(pl) { open = pl } }
                 }
             }
         }
@@ -98,9 +105,9 @@ fun PlaylistsScreen(player: PlayerConnection) {
         var name by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { creating = false },
-            title = { Text("Nova playlist") },
+            title = { Text("New playlist") },
             text = {
-                OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Nome") })
+                OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") })
             },
             confirmButton = {
                 TextButton(
@@ -112,10 +119,40 @@ fun PlaylistsScreen(player: PlayerConnection) {
                             creating = false
                         }
                     },
-                ) { Text("Criar") }
+                ) { Text("Create") }
             },
-            dismissButton = { TextButton({ creating = false }) { Text("Cancelar") } },
+            dismissButton = { TextButton({ creating = false }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun PlaylistRow(pl: PlaylistFfi, onClick: () -> Unit) {
+    val repo = (LocalContext.current.applicationContext as YasmineApp).repo
+    val scheme = MaterialTheme.colorScheme
+    var artHash by remember(pl.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(pl.id) {
+        val first = repo.playlistTracks(pl.id).firstOrNull()
+        artHash = first?.let { repo.rows(listOf(it)).firstOrNull()?.artHash }
+    }
+
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Cover(artHash ?: pl.id, 96, Modifier.size(48.dp), corner = 8)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                pl.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = scheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text("${pl.items} tracks", fontSize = 11.5.sp, color = scheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -123,27 +160,34 @@ fun PlaylistsScreen(player: PlayerConnection) {
 private fun PlaylistDetail(pl: PlaylistFfi, player: PlayerConnection, onBack: () -> Unit) {
     val repo = (LocalContext.current.applicationContext as YasmineApp).repo
     val scope = rememberCoroutineScope()
+    val scheme = MaterialTheme.colorScheme
     var trackIds by remember(pl.id) { mutableStateOf<List<Long>>(emptyList()) }
 
     LaunchedEffect(pl.id) { trackIds = repo.playlistTracks(pl.id) }
 
-    Column(Modifier.fillMaxSize()) {
-        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = scheme.onSurface)
             }
-            Text(pl.name, style = MaterialTheme.typography.titleLarge)
+            Text(pl.name, style = MaterialTheme.typography.titleLarge, color = scheme.onSurface)
         }
         if (trackIds.isEmpty()) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
-                Text("Sem faixas locais ainda.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("No local tracks yet.", color = scheme.onSurfaceVariant)
             }
         } else {
-            TextButton(onClick = {
-                scope.launch { player.playTracks(repo.rows(trackIds), 0) }
-            }) {
+            Button(
+                onClick = { scope.launch { player.playTracks(repo.rows(trackIds), 0) } },
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = scheme.primary,
+                    contentColor = scheme.onPrimary,
+                ),
+                modifier = Modifier.padding(vertical = 4.dp),
+            ) {
                 Icon(Icons.Filled.PlayArrow, null)
-                Text("Tocar tudo")
+                Spacer(Modifier.width(6.dp))
+                Text("Play all")
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(trackIds) { id -> TrackLine(id) }
@@ -155,10 +199,26 @@ private fun PlaylistDetail(pl: PlaylistFfi, player: PlayerConnection, onBack: ()
 @Composable
 private fun TrackLine(id: Long) {
     val repo = (LocalContext.current.applicationContext as YasmineApp).repo
+    val scheme = MaterialTheme.colorScheme
     var label by remember(id) { mutableStateOf("…") }
+    var hash by remember(id) { mutableStateOf<String?>(null) }
     LaunchedEffect(id) {
         val r = repo.rows(listOf(id)).firstOrNull()
-        label = r?.let { listOfNotNull(it.artist, it.title).joinToString(" — ") } ?: "faixa ainda não baixada"
+        label = r?.let { listOfNotNull(it.artist, it.title).joinToString(" — ") } ?: "not downloaded yet"
+        hash = r?.artHash
     }
-    Text(label, Modifier.fillMaxWidth().padding(16.dp), style = MaterialTheme.typography.bodyMedium)
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Cover(hash, 96, Modifier.size(36.dp), corner = 5)
+        Spacer(Modifier.width(12.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = scheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }

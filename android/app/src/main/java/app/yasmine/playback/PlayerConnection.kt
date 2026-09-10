@@ -54,6 +54,7 @@ class PlayerConnection(
 
     private var controller: MediaController? = null
     private var gainByMediaId: Map<String, Float> = emptyMap()
+    private var artHashByMediaId: Map<String, String?> = emptyMap()
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
@@ -87,7 +88,9 @@ class PlayerConnection(
             gainByMediaId = resolved.associate { (row, info) ->
                 row.id.toString() to gainToVolume(info.gainDb)
             }
+            artHashByMediaId = resolved.associate { (row, _) -> row.id.toString() to row.artHash }
             val items = resolved.map { (row, info) ->
+                val artFile = repo.artThumbPath(row.artHash, 512)?.let(::File)?.takeIf { it.exists() }
                 MediaItem.Builder()
                     .setMediaId(row.id.toString())
                     .setUri(Uri.fromFile(File(info.path)))
@@ -96,6 +99,7 @@ class PlayerConnection(
                             .setTitle(row.title)
                             .setArtist(row.artist ?: "")
                             .setAlbumTitle(row.album ?: "")
+                            .apply { artFile?.let { setArtworkUri(Uri.fromFile(it)) } }
                             .build()
                     )
                     .build()
@@ -130,15 +134,16 @@ class PlayerConnection(
     private fun pushState(player: Player?) {
         player ?: return
         val meta = player.mediaMetadata
+        val mediaId = player.currentMediaItem?.mediaId
         _state.value = PlayerState(
             hasQueue = player.mediaItemCount > 0,
             isPlaying = player.isPlaying,
             title = meta.title?.toString().orEmpty(),
             artist = meta.artist?.toString().orEmpty(),
-            artHash = null,
+            artHash = mediaId?.let { artHashByMediaId[it] },
             positionMs = player.currentPosition.coerceAtLeast(0),
             durationMs = player.duration.coerceAtLeast(0),
-            trackId = player.currentMediaItem?.mediaId?.toLongOrNull(),
+            trackId = mediaId?.toLongOrNull(),
         )
     }
 }

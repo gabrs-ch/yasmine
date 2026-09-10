@@ -7,13 +7,17 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,22 +33,24 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.yasmine.YasmineApp
+import app.yasmine.sync.SyncBus
+import app.yasmine.sync.SyncUiState
 import kotlinx.coroutines.launch
 import uniffi.yasmine_ffi.PairInfoFfi
-import uniffi.yasmine_ffi.PullReportFfi
 import uniffi.yasmine_ffi.SyncPhase
 import uniffi.yasmine_ffi.SyncProgressFfi
 
-private sealed interface PairStep {
-    data object Scan : PairStep
-    data class Confirm(val info: PairInfoFfi, val url: String) : PairStep
-    data class Syncing(val progress: SyncProgressFfi?) : PairStep
-    data class Done(val report: PullReportFfi) : PairStep
-    data class Failed(val message: String) : PairStep
+/** Etapa local — o que vem antes de disparar o sync. Rodando / pronto /
+ *  falhou vêm do [SyncBus] (o serviço), não daqui. */
+private sealed interface Step {
+    data object Scan : Step
+    data class Confirm(val info: PairInfoFfi, val url: String) : Step
 }
 
 @Composable
@@ -51,6 +58,8 @@ fun PairScreen() {
     val context = LocalContext.current
     val repo = (context.applicationContext as YasmineApp).repo
     val scope = rememberCoroutineScope()
+    val scheme = MaterialTheme.colorScheme
+    val sync by SyncBus.state.collectAsState()
 
     var granted by remember {
         mutableStateOf(
@@ -62,151 +71,184 @@ fun PairScreen() {
         ActivityResultContracts.RequestPermission()
     ) { granted = it }
 
-    var step by remember { mutableStateOf<PairStep>(PairStep.Scan) }
-
-    fun startSync(pull: suspend ((SyncProgressFfi) -> Unit) -> PullReportFfi) {
-        step = PairStep.Syncing(null)
-        scope.launch {
-            step = try {
-                val report = pull { p -> step = PairStep.Syncing(p) }
-                PairStep.Done(report)
-            } catch (t: Throwable) {
-                PairStep.Failed(t.message ?: t.toString())
-            }
-        }
-    }
+    var step by remember { mutableStateOf<Step>(Step.Scan) }
+    var manual by remember { mutableStateOf(false) }
 
     Column(
         Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Parear com o PC", style = MaterialTheme.typography.titleLarge)
+        Text("Sync with the PC", style = MaterialTheme.typography.titleLarge, color = scheme.onSurface)
         Text(
-            "No PC: rode o yasmine-sync-host. Aponte a câmera pro QR que ele mostra.",
+            "On the PC: open Yasmine and tap the phone icon (or run yasmine-sync-host). Point the camera at the code.",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = scheme.onSurfaceVariant,
         )
 
-        when (val s = step) {
-            is PairStep.Scan -> {
-                if (!granted) {
-                    Button(onClick = { askCamera.launch(Manifest.permission.CAMERA) }) {
-                        Text("Permitir a câmera")
-                    }
-                } else {
-                    QrScanner(
-                        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
-                        onQr = { raw ->
-                            if (raw.startsWith("yasmine://pair")) {
-                                scope.launch {
-                                    step = try {
-                                        PairStep.Confirm(repo.parsePair(raw), raw)
-                                    } catch (t: Throwable) {
-                                        PairStep.Failed("QR inválido: ${t.message}")
+        when (val s = sync) {
+            is SyncUiState.Running -> SyncingView(s.progress) { SyncBus.cancel(context) }
+
+            is SyncUiState.Done -> {
+                Text("Done ✓", style = MaterialTheme.typography.titleMedium, color = scheme.onSurface)
+                Text(
+                    "${s.tracksAdded} new tracks · ${s.playlists} playlists" +
+                        if (s.mismatched > 0uL) " · ${s.mismatched} discarded" else "",
+                    color = scheme.onSurfaceVariant,
+                )
+                PrimaryButton("Pair another", scheme) {
+                    SyncBus.reset(); step = Step.Scan; manual = false
+                }
+            }
+
+            is SyncUiState.Failed -> {
+                Text("Failed", style = MaterialTheme.typography.titleMedium, color = scheme.onSurface)
+                Text(s.message, color = scheme.error)
+                PrimaryButton("Try again", scheme) {
+                    SyncBus.reset(); step = Step.Scan; manual = false
+                }
+            }
+
+            SyncUiState.Idle -> when (val st = step) {
+                is Step.Scan -> {
+                    if (!granted) {
+                        PrimaryButton("Allow camera", scheme) {
+                            askCamera.launch(Manifest.permission.CAMERA)
+                        }
+                    } else if (manual) {
+                        ManualEntry(
+                            scheme,
+                            onCancel = { manual = false },
+                            onConnect = { deviceId, addr ->
+                                SyncBus.startFromAddr(context, deviceId, addr)
+                            },
+                        )
+                    } else {
+                        Box(
+                            Modifier.fillMaxWidth().heightIn(max = 320.dp).aspectRatio(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                        ) {
+                            QrScanner(
+                                modifier = Modifier.fillMaxSize(),
+                                onQr = { raw ->
+                                    if (raw.startsWith("yasmine://pair")) {
+                                        scope.launch {
+                                            step = runCatching { Step.Confirm(repo.parsePair(raw), raw) }
+                                                .getOrElse { Step.Scan }
+                                        }
                                     }
-                                }
-                            }
-                        },
-                    )
-                    ManualEntry(onConnect = { deviceId, addr ->
-                        startSync { onProgress -> repo.pullFromAddr(deviceId, addr, onProgress) }
-                    })
-                }
-            }
-
-            is PairStep.Confirm -> {
-                Text("Baixar a biblioteca inteira de:", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    s.info.name.ifBlank { s.info.deviceId.take(12) },
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                s.info.host?.let { Text("$it:${s.info.port ?: "?"}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { startSync { onProgress -> repo.pull(s.url, onProgress) } }) {
-                        Text("Baixar")
+                                },
+                            )
+                        }
+                        OutlinedButton(onClick = { manual = true }) { Text("Enter address manually") }
                     }
-                    OutlinedButton(onClick = { step = PairStep.Scan }) { Text("Cancelar") }
                 }
-            }
 
-            is PairStep.Syncing -> SyncingView(s.progress, onCancel = {
-                repo.cancelSync()
-            })
-
-            is PairStep.Done -> {
-                Text("Pronto ✓", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "${s.report.tracksAdded} faixas novas · ${s.report.playlistsMerged} playlists" +
-                        if (s.report.hashMismatch > 0uL) " · ${s.report.hashMismatch} descartadas" else "",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(onClick = { step = PairStep.Scan }) { Text("Parear com outro") }
-            }
-
-            is PairStep.Failed -> {
-                Text("Falhou", style = MaterialTheme.typography.titleMedium)
-                Text(s.message, color = MaterialTheme.colorScheme.error)
-                Button(onClick = { step = PairStep.Scan }) { Text("Tentar de novo") }
+                is Step.Confirm -> {
+                    Text("Download the whole library from:", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                    Text(
+                        st.info.name.ifBlank { st.info.deviceId.take(12) },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = scheme.onSurface,
+                    )
+                    st.info.host?.let {
+                        Text("$it:${st.info.port ?: "?"}", color = scheme.onSurfaceVariant)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PrimaryButton("Download", scheme) { SyncBus.startFromUrl(context, st.url) }
+                        OutlinedButton(onClick = { step = Step.Scan }) { Text("Cancel") }
+                    }
+                }
             }
         }
 
-        PairedList()
+        PairedList(scheme)
     }
 }
 
 @Composable
+private fun PrimaryButton(label: String, scheme: androidx.compose.material3.ColorScheme, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = scheme.primary,
+            contentColor = scheme.onPrimary,
+        ),
+    ) { Text(label) }
+}
+
+@Composable
 private fun SyncingView(p: SyncProgressFfi?, onCancel: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val phase = when (p?.phase) {
-            null, SyncPhase.CONNECTING -> "conectando…"
-            SyncPhase.MERGING_USER_DATA -> "juntando playlists…"
-            SyncPhase.FETCHING_LIST -> "comparando bibliotecas…"
-            SyncPhase.DOWNLOADING -> "baixando faixas"
-            SyncPhase.INDEXING -> "indexando…"
-            SyncPhase.DONE -> "finalizando…"
+            null, SyncPhase.CONNECTING -> "Connecting…"
+            SyncPhase.MERGING_USER_DATA -> "Merging playlists…"
+            SyncPhase.FETCHING_LIST -> "Comparing libraries…"
+            SyncPhase.DOWNLOADING -> "Downloading tracks"
+            SyncPhase.INDEXING -> "Indexing…"
+            SyncPhase.DONE -> "Finishing…"
         }
-        Text(phase, style = MaterialTheme.typography.bodyLarge)
+        Text(phase, style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface)
         if (p != null && p.phase == SyncPhase.DOWNLOADING && p.tracksTotal > 0uL) {
             LinearProgressIndicator(
                 progress = { p.tracksDone.toFloat() / p.tracksTotal.toFloat() },
+                color = scheme.primary,
+                trackColor = scheme.outline,
                 modifier = Modifier.fillMaxWidth(),
             )
             val mb = { b: ULong -> "%.1f".format(b.toDouble() / 1_048_576.0) }
             Text(
                 "${p.tracksDone}/${p.tracksTotal} · ${mb(p.bytesDone)}/${mb(p.bytesTotal)} MB",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
             )
-            p.current?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1) }
+            p.current?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1) }
         } else {
-            Box(Modifier.fillMaxWidth(), Alignment.Center) { CircularProgressIndicator() }
+            Box(Modifier.fillMaxWidth(), Alignment.Center) { CircularProgressIndicator(color = scheme.primary) }
         }
-        OutlinedButton(onClick = onCancel) { Text("Cancelar") }
+        Text(
+            "You can leave this screen — it keeps going in the notification.",
+            style = MaterialTheme.typography.bodySmall,
+            color = scheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = onCancel) { Text("Cancel") }
     }
 }
 
 @Composable
-private fun ManualEntry(onConnect: (deviceId: String, addr: String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+private fun ManualEntry(
+    scheme: androidx.compose.material3.ColorScheme,
+    onCancel: () -> Unit,
+    onConnect: (deviceId: String, addr: String) -> Unit,
+) {
     var deviceId by remember { mutableStateOf("") }
     var addr by remember { mutableStateOf("") }
-
-    if (!expanded) {
-        OutlinedButton(onClick = { expanded = true }) { Text("Digitar IP manualmente") }
-        return
-    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(deviceId, { deviceId = it }, singleLine = true, label = { Text("device id (hex do QR)") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(addr, { addr = it }, singleLine = true, label = { Text("ip:porta") }, modifier = Modifier.fillMaxWidth())
-        Button(
-            enabled = deviceId.isNotBlank() && addr.contains(":"),
-            onClick = { onConnect(deviceId.trim(), addr.trim()) },
-        ) { Text("Conectar") }
+        OutlinedTextField(
+            deviceId, { deviceId = it }, singleLine = true,
+            label = { Text("device id (hex from the QR)") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            addr, { addr = it }, singleLine = true,
+            label = { Text("ip:port") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                enabled = deviceId.isNotBlank() && addr.contains(":"),
+                onClick = { onConnect(deviceId.trim(), addr.trim()) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = scheme.primary, contentColor = scheme.onPrimary,
+                ),
+            ) { Text("Connect") }
+            OutlinedButton(onClick = onCancel) { Text("Use camera") }
+        }
     }
 }
 
 @Composable
-private fun PairedList() {
+private fun PairedList(scheme: androidx.compose.material3.ColorScheme) {
     val repo = (LocalContext.current.applicationContext as YasmineApp).repo
     val scope = rememberCoroutineScope()
     var devices by remember { mutableStateOf(listOf<uniffi.yasmine_ffi.PairedDeviceFfi>()) }
@@ -214,17 +256,22 @@ private fun PairedList() {
     if (devices.isEmpty()) return
 
     Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Dispositivos pareados", style = MaterialTheme.typography.titleSmall)
+        Text("Paired devices", style = MaterialTheme.typography.titleSmall, color = scheme.onSurface)
         devices.forEach { d ->
-            androidx.compose.foundation.layout.Row(
+            Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(d.name.ifBlank { d.deviceId.take(12) }, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    d.name.ifBlank { d.deviceId.take(12) },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onSurface,
+                )
                 OutlinedButton(onClick = {
                     scope.launch { repo.unpair(d.deviceId); devices = repo.pairedDevices() }
-                }) { Text("Esquecer") }
+                }) { Text("Forget") }
             }
         }
     }
