@@ -28,6 +28,8 @@ use tauri::Manager;
 use state::AppState;
 
 fn main() {
+    linux_webkit_workarounds();
+
     let app_state = AppState::load().unwrap_or_else(|err| {
         eprintln!("Yasmine: {err}");
         std::process::exit(1);
@@ -102,4 +104,25 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Yasmine");
+}
+
+/// O renderizador DMABUF do WebKitGTK 2.4x quebra em muitas combinações de
+/// mesa/driver — e mais ainda dentro de um AppImage, onde libs empacotadas
+/// convivem com o `libGL`/`libEGL`/`libgbm` do host (`WebKitWebProcess`
+/// aborta com SIGABRT já na subida, visto em Fedora/Nobara). Desligá-lo cai
+/// num caminho de composição estável; a diferença de desempenho é
+/// imperceptível numa UI de player. Também desliga a aceleração quando não
+/// há GPU utilizável (VM).
+fn linux_webkit_workarounds() {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: primeira linha do `main`, antes de qualquer thread, GTK ou
+        // FFI — não há leitura concorrente do ambiente.
+        #[allow(unsafe_code)]
+        unsafe {
+            if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            }
+        }
+    }
 }
