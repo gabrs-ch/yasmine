@@ -4,6 +4,56 @@ import { api, artUrl, type TrackRow } from "../lib/api";
 import { useStore } from "../store";
 import { coverClass } from "./Thumb";
 import { Equalizer } from "./icons";
+import { openContextMenu, type MenuItem } from "./ContextMenu";
+
+function trackMenu(row: TrackRow, index: number): MenuItem[] {
+  const st = useStore.getState();
+  const src = st.source;
+  const items: MenuItem[] = [];
+
+  if (row.artistId != null && !(src.kind === "artist" && src.id === row.artistId)) {
+    const aid = row.artistId;
+    items.push(
+      { label: `Only tracks by ${row.artist ?? "this artist"}`, onSelect: () => void st.viewArtist(aid) },
+      { kind: "sep" },
+    );
+  }
+
+  items.push({
+    label: "Add to playlist",
+    submenu: [
+      ...st.playlists.map((p) => ({
+        label: p.name,
+        onSelect: () => void st.addToPlaylist(p.id, row.id),
+      })),
+      ...(st.playlists.length ? [{ kind: "sep" as const }] : []),
+      { label: "New playlist…", onSelect: () => void st.createPlaylist(row.id) },
+    ],
+  });
+
+  if (src.kind === "playlist") {
+    items.push(
+      { kind: "sep" },
+      {
+        label: "Move up",
+        disabled: index === 0,
+        onSelect: () => void st.movePlaylistItem(index, index - 1),
+      },
+      {
+        label: "Move down",
+        disabled: index >= st.total - 1,
+        onSelect: () => void st.movePlaylistItem(index, index + 1),
+      },
+      { label: "Remove from playlist", onSelect: () => void st.removeFromPlaylist(index) },
+    );
+  }
+
+  items.push({ kind: "sep" }, {
+    label: "Choose album cover…",
+    onSelect: () => void st.setAlbumArt(row.id),
+  });
+  return items;
+}
 
 const ROW_H = 46;
 
@@ -130,6 +180,7 @@ export function MainPane() {
                   style={style}
                   key={vi.key}
                   onDoubleClick={() => void playAt(vi.index)}
+                  onContextMenu={(e) => openContextMenu(e, trackMenu(row, vi.index))}
                 >
                   <div className="num" style={playing ? { display: "flex", alignItems: "center" } : undefined}>
                     {playing ? <Equalizer /> : (row.trackNo ?? vi.index + 1)}

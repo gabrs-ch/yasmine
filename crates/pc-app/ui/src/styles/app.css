@@ -777,6 +777,86 @@ body {
   background: var(--accent-bright);
 }
 
+/* ---- menu de contexto ---- */
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+.ctxmenu {
+  position: fixed;
+  min-width: 190px;
+  background: var(--elevated);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 5px;
+  box-shadow: 0 12px 40px -8px rgba(0, 0, 0, 0.6);
+  font-size: 12.5px;
+}
+.ctx-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 9px;
+  border-radius: 5px;
+  color: var(--text);
+  cursor: default;
+  white-space: nowrap;
+}
+.ctx-item:hover:not(.disabled) {
+  background: var(--hover);
+}
+.ctx-item.danger {
+  color: #e5786b;
+}
+.ctx-item.disabled {
+  color: var(--faint);
+}
+.ctx-caret {
+  color: var(--faint);
+  font-size: 14px;
+  line-height: 1;
+}
+.ctx-sub {
+  position: absolute;
+  left: 100%;
+  top: -6px;
+  padding-left: 2px;
+}
+.ctx-sub .ctxmenu {
+  position: static;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.ctx-sep {
+  height: 1px;
+  background: var(--rule);
+  margin: 5px 4px;
+}
+.ctx-label {
+  padding: 6px 9px 3px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ---- campo de renomear playlist na sidebar ---- */
+.rename-input {
+  width: calc(100% - 24px);
+  margin: 2px 12px;
+  padding: 6px 8px;
+  background: var(--ground);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
 /* ---- scan toast ---- */
 .scan-toast {
   position: fixed;

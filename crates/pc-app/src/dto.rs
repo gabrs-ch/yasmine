@@ -84,6 +84,7 @@ impl From<TrackRow> for TrackRowDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlaylistDto {
     pub id: String,
     pub name: String,
@@ -92,6 +93,8 @@ pub struct PlaylistDto {
     pub covers: Vec<String>,
     /// A playlist tem pasta vinculada (mostra "· linked folder" no subtítulo).
     pub linked: bool,
+    /// Tem foto escolhida pelo usuário (habilita "Remove photo").
+    pub has_image: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,6 +102,16 @@ pub struct ArtistDto {
     pub id: i64,
     pub name: String,
     pub tracks: u64,
+}
+
+/// Uma pasta vinculada a uma playlist — pro submenu "Unlink …".
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkDto {
+    pub root_id: i64,
+    pub rel_prefix: String,
+    /// "Unlink whole folder" ou `Unlink "sub/pasta"`.
+    pub label: String,
 }
 
 impl From<ArtistBrief> for ArtistDto {
@@ -138,5 +151,6 @@ pub fn playlist_dto(pl: &Playlist, covers: &[[u8; 32]], linked: bool) -> Playlis
         items: pl.items,
         covers: hex,
         linked,
+        has_image: pl.image_hash.is_some(),
     }
 }

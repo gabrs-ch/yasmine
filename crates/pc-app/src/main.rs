@@ -40,18 +40,23 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Um argumento de pasta na linha de comando aponta a biblioteca
-            // já na subida (atalho, `cargo tauri dev -- <pasta>`, e a base do
-            // "abrir com" da Fase 4). Arquivos soltos: Fase 4.
-            if let Some(dir) = std::env::args_os()
-                .skip(1)
-                .map(PathBuf::from)
-                .find(|p| p.is_dir())
+            // Linha de comando: uma pasta aponta a biblioteca já na subida
+            // (atalho, `cargo tauri dev -- <pasta>`); um ou mais arquivos são
+            // o "abrir com" do gerenciador — aponta a biblioteca pra pasta
+            // deles e toca depois que o scan indexar (`flush_pending_play`).
+            let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+            let dir = args.iter().find(|p| p.is_dir()).cloned();
+            let files: Vec<PathBuf> = args.iter().filter(|p| p.is_file()).cloned().collect();
             {
-                app.state::<Mutex<AppState>>()
-                    .lock()
-                    .expect("estado do app")
-                    .set_root(&handle, dir);
+                let state = app.state::<Mutex<AppState>>();
+                let mut st = state.lock().expect("estado do app");
+                if let Some(d) = dir {
+                    st.set_root(&handle, d);
+                } else if let Some(parent) = files.first().and_then(|f| f.parent()) {
+                    let parent = parent.to_path_buf();
+                    st.pending_play = files;
+                    st.set_root(&handle, parent);
+                }
             }
 
             // Loop que bombeia os eventos do motor de áudio e transmite o
@@ -77,6 +82,22 @@ fn main() {
             commands::set_shuffle,
             commands::cycle_repeat,
             commands::playback_snapshot,
+            commands::flush_pending_play,
+            commands::playlist_create,
+            commands::playlist_rename,
+            commands::playlist_delete,
+            commands::playlist_add_tracks,
+            commands::playlist_remove_at,
+            commands::playlist_move,
+            commands::playlist_set_image,
+            commands::playlist_clear_image,
+            commands::library_set_image,
+            commands::library_clear_image,
+            commands::library_image,
+            commands::track_set_album_art,
+            commands::playlist_links,
+            commands::playlist_link_folder,
+            commands::playlist_unlink_folder,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Yasmine");

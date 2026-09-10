@@ -34,6 +34,7 @@ export interface Playlist {
   items: number;
   covers: string[];
   linked: boolean;
+  hasImage: boolean;
 }
 
 export interface Artist {
@@ -96,7 +97,32 @@ export const api = {
   setShuffle: (on: boolean) => invoke<Playback>("set_shuffle", { on }),
   cycleRepeat: () => invoke<Playback>("cycle_repeat"),
   playbackSnapshot: () => invoke<Playback>("playback_snapshot"),
+  flushPendingPlay: () => invoke<Playback | null>("flush_pending_play"),
+
+  playlistCreate: (name?: string) => invoke<Playlist>("playlist_create", { name: name ?? null }),
+  playlistRename: (id: string, name: string) => invoke<void>("playlist_rename", { id, name }),
+  playlistDelete: (id: string) => invoke<void>("playlist_delete", { id }),
+  playlistAddTracks: (id: string, tracks: number[]) =>
+    invoke<number>("playlist_add_tracks", { id, tracks }),
+  playlistRemoveAt: (index: number) => invoke<void>("playlist_remove_at", { index }),
+  playlistMove: (from: number, to: number) => invoke<void>("playlist_move", { from, to }),
+  playlistSetImage: (id: string) => invoke<void>("playlist_set_image", { id }),
+  playlistClearImage: (id: string) => invoke<void>("playlist_clear_image", { id }),
+  librarySetImage: () => invoke<string | null>("library_set_image"),
+  libraryClearImage: () => invoke<void>("library_clear_image"),
+  libraryImage: () => invoke<string | null>("library_image"),
+  trackSetAlbumArt: (id: number) => invoke<void>("track_set_album_art", { id }),
+  playlistLinks: (id: string) => invoke<LinkInfo[]>("playlist_links", { id }),
+  playlistLinkFolder: (id: string) => invoke<void>("playlist_link_folder", { id }),
+  playlistUnlinkFolder: (id: string, rootId: number, relPrefix: string) =>
+    invoke<void>("playlist_unlink_folder", { id, rootId, relPrefix }),
 };
+
+export interface LinkInfo {
+  rootId: number;
+  relPrefix: string;
+  label: string;
+}
 
 export const onScanProgress = (cb: (p: ScanProgress) => void): Promise<UnlistenFn> =>
   listen<ScanProgress>("scan://progress", (e) => cb(e.payload));

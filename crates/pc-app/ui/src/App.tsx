@@ -5,6 +5,7 @@ import { MainPane } from "./components/MainPane";
 import { PlayerBar } from "./components/PlayerBar";
 import { EmptyState } from "./components/EmptyState";
 import { ScanToast } from "./components/ScanToast";
+import { ContextMenuHost } from "./components/ContextMenu";
 import { useStore } from "./store";
 
 export function App() {
@@ -57,6 +58,7 @@ export function App() {
       </div>
       <PlayerBar />
       <ScanToast />
+      <ContextMenuHost />
     </div>
   );
 }
