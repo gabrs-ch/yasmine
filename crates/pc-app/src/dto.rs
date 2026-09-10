@@ -98,10 +98,16 @@ pub struct PlaylistDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ArtistDto {
     pub id: i64,
     pub name: String,
     pub tracks: u64,
+    /// Hex da miniatura: a foto escolhida pelo usuário, ou uma capa qualquer
+    /// das faixas dele.
+    pub cover: Option<String>,
+    /// Tem foto escolhida (habilita "Remove photo").
+    pub has_image: bool,
 }
 
 /// Uma pasta vinculada a uma playlist — pro submenu "Unlink …".
@@ -114,12 +120,18 @@ pub struct LinkDto {
     pub label: String,
 }
 
-impl From<ArtistBrief> for ArtistDto {
-    fn from(a: ArtistBrief) -> Self {
+impl ArtistDto {
+    /// `custom` = hash da foto escolhida pelo usuário (do `meta`), se houver.
+    pub fn build(a: ArtistBrief, custom: Option<[u8; 32]>) -> Self {
         Self {
             id: a.id.0,
             name: a.name,
             tracks: a.tracks,
+            cover: custom
+                .as_ref()
+                .map(hexhash::encode)
+                .or_else(|| a.cover.as_ref().map(hexhash::encode)),
+            has_image: custom.is_some(),
         }
     }
 }

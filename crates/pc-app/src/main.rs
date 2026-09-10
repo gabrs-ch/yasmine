@@ -101,6 +101,8 @@ fn main() {
             commands::playlist_links,
             commands::playlist_link_folder,
             commands::playlist_unlink_folder,
+            commands::artist_set_image,
+            commands::artist_clear_image,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Yasmine");

@@ -41,6 +41,8 @@ export interface Artist {
   id: number;
   name: string;
   tracks: number;
+  cover: string | null;
+  hasImage: boolean;
 }
 
 export interface OpenResult {
@@ -116,6 +118,8 @@ export const api = {
   playlistLinkFolder: (id: string) => invoke<void>("playlist_link_folder", { id }),
   playlistUnlinkFolder: (id: string, rootId: number, relPrefix: string) =>
     invoke<void>("playlist_unlink_folder", { id, rootId, relPrefix }),
+  artistSetImage: (id: number) => invoke<void>("artist_set_image", { id }),
+  artistClearImage: (id: number) => invoke<void>("artist_clear_image", { id }),
 };
 
 export interface LinkInfo {

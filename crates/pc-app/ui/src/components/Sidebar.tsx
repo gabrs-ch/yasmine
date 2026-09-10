@@ -157,14 +157,24 @@ export function Sidebar() {
         {sideTab === "artists" &&
           artists.map((ar) => {
             const on = source.kind === "artist" && source.id === ar.id;
+            const menu: MenuItem[] = [
+              {
+                label: ar.hasImage ? "Change photo…" : "Choose photo…",
+                onSelect: () => void s().setArtistImage(ar.id),
+              },
+              ...(ar.hasImage
+                ? [{ label: "Remove photo", onSelect: () => void s().clearArtistImage(ar.id) }]
+                : []),
+            ];
             return (
               <button
                 className={`row${on ? " on" : ""}`}
                 key={ar.id}
                 type="button"
                 onClick={() => void openSource({ kind: "artist", id: ar.id })}
+                onContextMenu={(e) => openContextMenu(e, menu)}
               >
-                <Thumb covers={[]} seed={`artist-${ar.id}`} round />
+                <Thumb covers={ar.cover ? [ar.cover] : []} seed={`artist-${ar.id}`} round />
                 <div className="r-txt">
                   <div className="r-name">{ar.name}</div>
                   <div className="r-sub">

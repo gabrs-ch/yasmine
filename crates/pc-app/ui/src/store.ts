@@ -76,6 +76,8 @@ interface AppStore {
   linkPlaylistFolder: (id: string) => Promise<void>;
   unlinkPlaylistFolder: (id: string, rootId: number, relPrefix: string) => Promise<void>;
   setAlbumArt: (trackId: number) => Promise<void>;
+  setArtistImage: (id: number) => Promise<void>;
+  clearArtistImage: (id: number) => Promise<void>;
   viewArtist: (id: number) => Promise<void>;
 }
 
@@ -291,6 +293,16 @@ export const useStore = create<AppStore>((set, get) => ({
   },
   setAlbumArt: async (trackId) => {
     await api.trackSetAlbumArt(trackId);
+    await get().refreshLibrary();
+    await get().reopen();
+  },
+  setArtistImage: async (id) => {
+    await api.artistSetImage(id);
+    await get().refreshLibrary();
+    await get().reopen();
+  },
+  clearArtistImage: async (id) => {
+    await api.artistClearImage(id);
     await get().refreshLibrary();
     await get().reopen();
   },

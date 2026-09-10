@@ -33,21 +33,28 @@ export function TopBar() {
 
   return (
     <div className="topbar" data-tauri-drag-region>
-      <button className="icobtn" title="Choose music folder" type="button" onClick={() => void pickFolder()}>
-        <Folder />
-      </button>
-      <span className="path" title={root ?? undefined}>
-        {root ? shortPath(root) : "No folder"}
-      </span>
-      <button
-        className="icobtn"
-        title="Rescan folder"
-        type="button"
-        disabled={!root}
-        onClick={() => void rescan()}
-      >
-        <RefreshCw />
-      </button>
+      <div className="topbar-left">
+        <button
+          className="icobtn"
+          title="Choose music folder"
+          type="button"
+          onClick={() => void pickFolder()}
+        >
+          <Folder />
+        </button>
+        <span className="path" title={root ?? undefined}>
+          {root ? shortPath(root) : "No folder"}
+        </span>
+        <button
+          className="icobtn"
+          title="Rescan folder"
+          type="button"
+          disabled={!root}
+          onClick={() => void rescan()}
+        >
+          <RefreshCw />
+        </button>
+      </div>
 
       <label className="search">
         <Search />
@@ -60,21 +67,33 @@ export function TopBar() {
         />
       </label>
 
-      <div className="wbtns">
-        <button className="wbtn" title="Minimize" type="button" onClick={() => void appWindow.minimize()}>
-          <Minus />
-        </button>
-        <button
-          className="wbtn"
-          title="Maximize"
-          type="button"
-          onClick={() => void appWindow.toggleMaximize()}
-        >
-          <Square />
-        </button>
-        <button className="wbtn close" title="Close" type="button" onClick={() => void appWindow.close()}>
-          <X />
-        </button>
+      <div className="topbar-right">
+        <div className="wbtns">
+          <button
+            className="wbtn"
+            title="Minimize"
+            type="button"
+            onClick={() => void appWindow.minimize()}
+          >
+            <Minus />
+          </button>
+          <button
+            className="wbtn"
+            title="Maximize"
+            type="button"
+            onClick={() => void appWindow.toggleMaximize()}
+          >
+            <Square />
+          </button>
+          <button
+            className="wbtn close"
+            title="Close"
+            type="button"
+            onClick={() => void appWindow.close()}
+          >
+            <X />
+          </button>
+        </div>
       </div>
     </div>
   );

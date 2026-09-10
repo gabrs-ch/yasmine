@@ -7,6 +7,7 @@ import { EmptyState } from "./components/EmptyState";
 import { ScanToast } from "./components/ScanToast";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { MiniBar } from "./components/MiniBar";
+import { ResizeHandles } from "./components/ResizeHandles";
 import { useStore } from "./store";
 
 export function App() {
@@ -77,6 +78,7 @@ export function App() {
       <PlayerBar />
       <ScanToast />
       <ContextMenuHost />
+      <ResizeHandles />
     </div>
   );
 }

@@ -87,11 +87,24 @@ body {
 /* ---- top bar ---- */
 .topbar {
   height: 44px;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 420px) 1fr;
   align-items: center;
   gap: 10px;
   padding: 0 12px;
   flex: none;
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
 }
 .icobtn {
   width: 28px;
@@ -121,9 +134,7 @@ body {
   max-width: 190px;
 }
 .search {
-  flex: 1;
-  max-width: 420px;
-  margin: 0 auto;
+  width: 100%;
   height: 30px;
   display: flex;
   align-items: center;
@@ -160,7 +171,6 @@ body {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-left: auto;
 }
 .wbtn {
   width: 30px;
@@ -275,7 +285,11 @@ body {
   flex: none;
   overflow: hidden;
   position: relative;
-  object-fit: cover;
+  /* Camada própria de composição: o WebKitGTK arredonda o recorte com
+     antialiasing só quando o elemento está numa layer — senão a borda da
+     foto sai serrilhada. */
+  transform: translateZ(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
 }
 .thumb.round {
   border-radius: 50%;
@@ -304,6 +318,7 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: inherit;
 }
 .r-txt {
   min-width: 0;
@@ -446,6 +461,11 @@ body {
   border-radius: 5px;
   overflow: hidden;
   position: relative;
+  transform: translateZ(0);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+.track .ca img {
+  border-radius: inherit;
 }
 .track .tt {
   font-size: 13.5px;
@@ -559,7 +579,13 @@ body {
   flex: none;
   overflow: hidden;
   position: relative;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  transform: translateZ(0);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.np-cover img {
+  border-radius: inherit;
 }
 .np-txt {
   min-width: 0;
@@ -624,8 +650,8 @@ body {
   cursor: default;
 }
 .playbtn svg {
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
 }
 .toggle-underline {
   position: relative;
@@ -785,6 +811,26 @@ body {
 .empty-btn:hover {
   background: var(--accent-bright);
 }
+
+/* ---- alças de redimensionar (janela sem borda) ---- */
+.resize-handles {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  pointer-events: none;
+}
+.rh {
+  position: absolute;
+  pointer-events: auto;
+}
+.rh-n { top: 0; left: 6px; right: 6px; height: 4px; cursor: ns-resize; }
+.rh-s { bottom: 0; left: 6px; right: 6px; height: 4px; cursor: ns-resize; }
+.rh-w { left: 0; top: 6px; bottom: 6px; width: 4px; cursor: ew-resize; }
+.rh-e { right: 0; top: 6px; bottom: 6px; width: 4px; cursor: ew-resize; }
+.rh-nw { top: 0; left: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+.rh-ne { top: 0; right: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.rh-sw { bottom: 0; left: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.rh-se { bottom: 0; right: 0; width: 8px; height: 8px; cursor: nwse-resize; }
 
 /* ---- modo compacto ---- */
 .mini-win {

@@ -64,12 +64,79 @@ pub fn list_playlists(state: St<'_>) -> Result<Vec<PlaylistDto>, String> {
     Ok(out)
 }
 
+fn artist_image_key(id: i64) -> String {
+    format!("artist_image:{id}")
+}
+
 #[tauri::command]
 pub fn list_artists(state: St<'_>) -> Result<Vec<ArtistDto>, String> {
     let st = state.lock().expect("estado do app");
-    library::artists(&st.db)
-        .map(|v| v.into_iter().map(ArtistDto::from).collect())
-        .map_err(|e| e.to_string())
+    let briefs = library::artists(&st.db).map_err(|e| e.to_string())?;
+
+    // Fotos escolhidas pelo usuário, numa consulta só.
+    let mut custom: std::collections::HashMap<i64, [u8; 32]> = std::collections::HashMap::new();
+    if let Ok(mut stmt) = st
+        .db
+        .conn()
+        .prepare("SELECT key, value FROM meta WHERE key LIKE 'artist_image:%'")
+    {
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
+        if let Ok(rows) = rows {
+            for (key, hex) in rows.flatten() {
+                if let (Some(id), Some(h)) = (
+                    key.strip_prefix("artist_image:")
+                        .and_then(|s| s.parse().ok()),
+                    hexhash::decode(&hex),
+                ) {
+                    custom.insert(id, h);
+                }
+            }
+        }
+    }
+
+    Ok(briefs
+        .into_iter()
+        .map(|b| {
+            let c = custom.get(&b.id.0).copied();
+            ArtistDto::build(b, c)
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn artist_set_image(app: AppHandle, state: St<'_>, id: i64) -> Result<(), String> {
+    let Some(fp) = app
+        .dialog()
+        .file()
+        .add_filter("Image", IMAGE_EXT)
+        .blocking_pick_file()
+    else {
+        return Ok(());
+    };
+    let path = fp.into_path().map_err(|e| e.to_string())?;
+    let st = state.lock().expect("estado do app");
+    let hash = st.image_into_cache(&path).ok_or("imagem inválida")?;
+    st.db
+        .conn()
+        .execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (artist_image_key(id), hexhash::encode(&hash)),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn artist_clear_image(state: St<'_>, id: i64) -> Result<(), String> {
+    state
+        .lock()
+        .expect("estado do app")
+        .db
+        .conn()
+        .execute("DELETE FROM meta WHERE key = ?1", [artist_image_key(id)])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Abre uma fonte: monta a view (guardada no estado), devolve o que a lista e
@@ -144,12 +211,25 @@ pub fn open_source(
                     .ok()
                     .and_then(|v| v.into_iter().find(|x| x.id == a).map(|x| x.name))
                     .unwrap_or_default();
-                let hero = library::rows(&st.db, &st.view[..total.min(1)])
+                // Foto escolhida pelo usuário tem prioridade; senão a capa da
+                // primeira faixa.
+                let hero = st
+                    .db
+                    .conn()
+                    .query_row(
+                        "SELECT value FROM meta WHERE key = ?1",
+                        [artist_image_key(a.0)],
+                        |r| r.get::<_, String>(0),
+                    )
                     .ok()
-                    .and_then(|mut r| r.pop())
-                    .and_then(|r| r.art_hash)
-                    .as_ref()
-                    .map(hexhash::encode);
+                    .or_else(|| {
+                        library::rows(&st.db, &st.view[..total.min(1)])
+                            .ok()
+                            .and_then(|mut r| r.pop())
+                            .and_then(|r| r.art_hash)
+                            .as_ref()
+                            .map(hexhash::encode)
+                    });
                 ("artist", name, tracks_label(total), hero)
             }
         };

@@ -127,13 +127,22 @@ pub struct ArtistBrief {
     /// Faixas locais em que ele é intérprete — o mesmo critério da linha
     /// "Playlist · N tracks", pra a sidebar ler igual dos dois lados.
     pub tracks: u64,
+    /// Uma capa qualquer das faixas dele, pra miniatura da sidebar. `None`
+    /// se nenhuma faixa tem capa.
+    pub cover: Option<[u8; 32]>,
 }
 
 /// Artistas com ao menos uma faixa local, em ordem alfabética (pela chave
 /// dobrada, então acento e caixa não bagunçam a ordem).
 pub fn artists(db: &Db) -> Result<Vec<ArtistBrief>> {
     let mut stmt = db.conn().prepare(
-        "SELECT ar.id, ar.name, count(t.id)
+        "SELECT ar.id, ar.name, count(t.id),
+                (SELECT ca.blob_hash
+                 FROM track tt
+                 JOIN album al     ON al.id = tt.album_id
+                 JOIN cover_art ca ON ca.id = al.art_id
+                 WHERE tt.artist_id = ar.id
+                 LIMIT 1)
          FROM artist ar
          JOIN track t ON t.artist_id = ar.id
          GROUP BY ar.id
@@ -144,6 +153,9 @@ pub fn artists(db: &Db) -> Result<Vec<ArtistBrief>> {
             id: ArtistId(row.get(0)?),
             name: row.get(1)?,
             tracks: row.get::<_, i64>(2)? as u64,
+            cover: row
+                .get::<_, Option<Vec<u8>>>(3)?
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()),
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
