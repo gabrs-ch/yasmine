@@ -68,6 +68,7 @@ export function MainPane() {
   const open = useStore((s) => s.open);
   const total = useStore((s) => s.total);
   const nowId = useStore((s) => s.playback?.now?.id ?? null);
+  const isPlaying = useStore((s) => s.playback?.playing ?? false);
   const source = useStore((s) => s.source);
   const playAt = useStore((s) => s.playAt);
   const movePlaylistItem = useStore((s) => s.movePlaylistItem);
@@ -225,7 +226,7 @@ export function MainPane() {
                   onContextMenu={(e) => openContextMenu(e, trackMenu(row, vi.index))}
                 >
                   <div className="num" style={playing ? { display: "flex", alignItems: "center" } : undefined}>
-                    {playing ? <Equalizer /> : (row.trackNo ?? vi.index + 1)}
+                    {playing ? <Equalizer paused={!isPlaying} /> : (row.trackNo ?? vi.index + 1)}
                   </div>
                   <div className={`ca ${coverClass(row.art ?? String(row.id))}`}>
                     {row.art && (

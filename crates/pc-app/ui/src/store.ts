@@ -59,6 +59,7 @@ interface AppStore {
   seek: (ms: number) => Promise<void>;
   seekBy: (deltaMs: number) => Promise<void>;
   setVolume: (v: number) => Promise<void>;
+  toggleMute: () => Promise<void>;
   toggleShuffle: () => Promise<void>;
   cycleRepeat: () => Promise<void>;
 
@@ -92,6 +93,9 @@ const flash = (msg: string, set: (p: Partial<AppStore>) => void) => {
   set({ toast: msg });
   window.setTimeout(() => set({ toast: null }), 6000);
 };
+
+/** Volume de antes de mutar, pra restaurar ao desmutar. */
+let preMuteVolume = 0.8;
 
 export const useStore = create<AppStore>((set, get) => ({
   ready: false,
@@ -213,8 +217,13 @@ export const useStore = create<AppStore>((set, get) => ({
   },
   setVolume: async (v) => {
     const vol = Math.min(1, Math.max(0, v));
+    preMuteVolume = vol > 0 ? vol : preMuteVolume;
     set((s) => (s.playback ? { playback: { ...s.playback, volume: vol } } : {}));
     await api.setVolume(vol);
+  },
+  toggleMute: async () => {
+    const cur = get().playback?.volume ?? 1;
+    await get().setVolume(cur > 0 ? 0 : preMuteVolume);
   },
   toggleShuffle: async () => {
     const p = get().playback;

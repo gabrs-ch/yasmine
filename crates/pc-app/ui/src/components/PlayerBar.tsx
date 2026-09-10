@@ -8,6 +8,7 @@ import {
   Repeat1,
   PictureInPicture2,
   Volume2,
+  VolumeX,
   PrevIcon,
   NextIcon,
   PlayIcon,
@@ -76,6 +77,7 @@ export function PlayerBar() {
   const prev = useStore((s) => s.prev);
   const seek = useStore((s) => s.seek);
   const setVolume = useStore((s) => s.setVolume);
+  const toggleMute = useStore((s) => s.toggleMute);
   const toggleShuffle = useStore((s) => s.toggleShuffle);
   const cycleRepeat = useStore((s) => s.cycleRepeat);
   const toggleMini = useStore((s) => s.toggleMini);
@@ -85,6 +87,7 @@ export function PlayerBar() {
   const pos = pb?.positionMs ?? 0;
   const frac = dur ? Math.min(1, pos / dur) : 0;
   const repeat = pb?.repeat ?? "off";
+  const muted = (pb?.volume ?? 1) === 0;
 
   return (
     <div className="player">
@@ -182,10 +185,18 @@ export function PlayerBar() {
           <PictureInPicture2 />
         </button>
         <span className="vol">
-          <Volume2 />
+          <button
+            className="volbtn"
+            type="button"
+            title={muted ? "Unmute" : "Mute"}
+            onClick={() => void toggleMute()}
+          >
+            {muted ? <VolumeX /> : <Volume2 />}
+          </button>
           <Scrubber
             className="vol-line"
             fillClass="vol-fill"
+            knob
             live
             value={pb?.volume ?? 1}
             onSeek={(f) => void setVolume(f)}

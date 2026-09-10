@@ -16,6 +16,7 @@ export {
   Repeat1,
   PictureInPicture2,
   Volume2,
+  VolumeX,
 } from "lucide-react";
 
 export function PrevIcon() {
@@ -51,10 +52,11 @@ export function PauseIcon() {
   );
 }
 
-/** As três barrinhas de "isto está tocando". Animação e cor no CSS (.eq). */
-export function Equalizer() {
+/** As três barrinhas de "isto está tocando". Animação e cor no CSS (.eq);
+ *  `paused` congela as barras (playback em pausa). */
+export function Equalizer({ paused = false }: { paused?: boolean }) {
   return (
-    <span className="eq" aria-hidden="true">
+    <span className={`eq${paused ? " paused" : ""}`} aria-hidden="true">
       <i />
       <i />
       <i />

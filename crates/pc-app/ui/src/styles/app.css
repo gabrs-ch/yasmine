@@ -534,6 +534,12 @@ body {
 .eq i:nth-child(3) {
   height: 65%;
 }
+/* Pausado: barras baixas e paradas — a animação é "tocando", não "esta é a
+   faixa carregada". */
+.eq.paused i {
+  animation: none !important;
+  height: 28%;
+}
 @media (prefers-reduced-motion: no-preference) {
   .eq i {
     animation: eq 0.9s ease-in-out infinite alternate;
@@ -569,8 +575,10 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  width: 300px;
-  flex: none;
+  /* Cresce até quase encostar no transporte antes de cortar o título —
+     `.right` cresce igual, então o transporte fica centrado na janela. */
+  flex: 1 1 0;
+  min-width: 0;
 }
 .np-cover {
   width: 56px;
@@ -607,7 +615,7 @@ body {
   margin-top: 2px;
 }
 .center {
-  flex: 1;
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -669,7 +677,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: min(520px, 60%);
+  width: min(560px, 42vw);
 }
 .time {
   font-family: var(--mono);
@@ -707,8 +715,8 @@ body {
   opacity: 1;
 }
 .right {
-  width: 210px;
-  flex: none;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -725,12 +733,26 @@ body {
   color: var(--dim);
 }
 .vol-line {
-  width: 64px;
+  width: 72px;
   height: 4px;
   border-radius: 999px;
   background: var(--rule);
   position: relative;
   cursor: default;
+}
+.vol-line:hover .track-knob {
+  opacity: 1;
+}
+.vol {
+  cursor: default;
+}
+.vol .volbtn {
+  display: flex;
+  color: var(--dim);
+  padding: 0;
+}
+.vol .volbtn:hover {
+  color: var(--text);
 }
 .vol-fill {
   position: absolute;
