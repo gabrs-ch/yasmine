@@ -171,6 +171,11 @@ exposta, só como o app lembrando o que você já tinha ajustado.
 - [ ] **4 — Sync na LAN.** QR → mDNS → Noise → diff por hash.
 - [ ] **5 — Refinamento.** Profiling real, biblioteca grande, onboarding.
 
+[`docs/contexto-android.md`](docs/contexto-android.md) é o handoff pra
+quem for escrever o Android e o sync local: arquitetura, modelo de dados,
+o que se reaproveita do `core`, e o desenho do pareamento por QR + download
+das músicas do PC pro celular, com os pontos ainda em aberto.
+
 ## Medições
 
 Numa VM de 4 núcleos e 3,8 GB, com renderização por software (sem GPU),
