@@ -14,9 +14,11 @@
 //!
 //! # Apagar é marcar
 //!
-//! Apagar uma playlist não apaga a linha, marca `deleted`. Sem esse túmulo, o
-//! outro device reintroduziria a playlist apagada no próximo encontro — ele
-//! tem uma linha que este não tem, e "não tenho" é indistinguível de "apaguei".
+//! Apagar uma playlist — ou um item dela — não apaga a linha, marca `deleted`.
+//! Sem esse túmulo, o outro device reintroduziria o que foi apagado no próximo
+//! encontro: ele tem uma linha que este não tem, e "não tenho" é
+//! indistinguível de "apaguei". `all`/`items`/`cover_hashes` filtram
+//! `deleted = 0`; o merge do sync usa `deleted_at` como relógio LWW.
 
 use uuid::Uuid;
 
@@ -127,7 +129,8 @@ fn touch(db: &Db, id: Uuid) -> Result<()> {
 pub fn all(db: &Db) -> Result<Vec<Playlist>> {
     let mut stmt = db.conn().prepare(
         "SELECT p.id, p.name, p.updated_at,
-                (SELECT count(*) FROM playlist_item i WHERE i.playlist_id = p.id),
+                (SELECT count(*) FROM playlist_item i
+                 WHERE i.playlist_id = p.id AND i.deleted = 0),
                 p.image_hash
          FROM playlist p
          WHERE p.deleted = 0
@@ -175,7 +178,7 @@ pub fn cover_hashes(db: &Db, id: Uuid) -> Result<Vec<[u8; 32]>> {
          JOIN track t       ON t.content_hash = i.track_key
          JOIN album al      ON al.id = t.album_id
          JOIN cover_art ca  ON ca.id = al.art_id
-         WHERE i.playlist_id = ?1
+         WHERE i.playlist_id = ?1 AND i.deleted = 0
          GROUP BY ca.blob_hash
          ORDER BY min(i.position)
          LIMIT 4",
@@ -198,7 +201,7 @@ pub fn items(db: &Db, id: Uuid) -> Result<Vec<Item>> {
         "SELECT i.position,
                 (SELECT t.id FROM track t WHERE t.content_hash = i.track_key LIMIT 1)
          FROM playlist_item i
-         WHERE i.playlist_id = ?1
+         WHERE i.playlist_id = ?1 AND i.deleted = 0
          ORDER BY i.position",
     )?;
     let rows = stmt.query_map([id.as_bytes().as_slice()], |row| {
@@ -268,10 +271,17 @@ pub fn append(db: &mut Db, id: Uuid, tracks: &[TrackId]) -> Result<usize> {
     Ok(added)
 }
 
+/// Remove um item — marcando o túmulo, não apagando a linha.
+///
+/// A linha fica com `deleted = 1` para o "apaguei" viajar no sync: um `DELETE`
+/// de verdade seria reintroduzido pelo outro device, que ainda tem o item.
+/// `deleted_at` é o relógio que o merge usa para decidir entre "apagado" e
+/// "re-adicionado depois". `items`/`all`/`cover_hashes` filtram `deleted = 0`.
 pub fn remove(db: &Db, id: Uuid, position: &str) -> Result<()> {
     db.conn().execute(
-        "DELETE FROM playlist_item WHERE playlist_id = ?1 AND position = ?2",
-        rusqlite::params![id.as_bytes().as_slice(), position],
+        "UPDATE playlist_item SET deleted = 1, deleted_at = ?3
+         WHERE playlist_id = ?1 AND position = ?2",
+        rusqlite::params![id.as_bytes().as_slice(), position, now_ms()],
     )?;
     touch(db, id)
 }
@@ -413,6 +423,32 @@ mod tests {
 
         let restantes = tracks(&db, id).expect("faixas");
         assert_eq!(restantes, vec![faixas[0], faixas[2], faixas[3]]);
+    }
+
+    /// Remover marca o túmulo: some da lista visível e da contagem, mas a
+    /// linha fica para o "apaguei" viajar no sync (schema v5).
+    #[test]
+    fn item_removido_vira_tumulo_e_some_da_lista() {
+        let (mut db, _env) = biblioteca("tumulo-item", 3);
+        let faixas = view(&db, Sort::ArtistAlbum).expect("view");
+        let id = create(&db, "Mix").expect("criar");
+        append(&mut db, id, &faixas).expect("acrescentar");
+
+        let itens = items(&db, id).expect("itens");
+        remove(&db, id, &itens[1].position).expect("remover");
+
+        assert_eq!(items(&db, id).expect("itens").len(), 2, "sumiu da lista?");
+        assert_eq!(all(&db).expect("listar")[0].items, 2, "contagem não caiu");
+
+        let mortos: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM playlist_item WHERE deleted = 1 AND deleted_at > 0",
+                [],
+                |r| r.get(0),
+            )
+            .expect("consultar");
+        assert_eq!(mortos, 1, "a linha do item removido devia ter ficado");
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 /// Versão do schema gravada em `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i32 = 4;
+pub const SCHEMA_VERSION: i32 = 5;
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
@@ -135,6 +135,19 @@ impl Db {
             // da linha no sync.
             tx.execute_batch("ALTER TABLE playlist ADD COLUMN image_hash BLOB;")?;
         }
+        if version < 5 {
+            // Túmulo de item de playlist. Apagar um item passa a marcar
+            // `deleted = 1` em vez de sumir com a linha: o sync (repo
+            // companion) faz UNIÃO dos itens das duas pontas, então sem o
+            // túmulo o item apagado num device é reintroduzido pelo outro.
+            // `deleted_at` é o relógio do LWW que decide "apagado depois de
+            // re-adicionado?". Mesma regra das v2–v4: coluna via migração, o
+            // schema.sql descreve só a criação do zero.
+            tx.execute_batch(
+                "ALTER TABLE playlist_item ADD COLUMN deleted    INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE playlist_item ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
 
@@ -219,5 +232,34 @@ mod tests {
 
         let err = Db::from_conn(conn).expect_err("deveria recusar");
         assert!(matches!(err, Error::SchemaTooNew { .. }));
+    }
+
+    /// Índice "antigo": só o schema base, carimbado como v4 na mão. Reabrir
+    /// tem que aplicar o passo v5 (túmulo de `playlist_item`) e nada mais.
+    #[test]
+    fn migra_v4_para_v5_adiciona_tumulo_de_item() {
+        let conn = Connection::open_in_memory().expect("abrir conexão");
+        conn.execute_batch(SCHEMA_SQL).expect("schema base");
+        conn.pragma_update(None, "user_version", 4)
+            .expect("marcar v4");
+
+        let db = Db::from_conn(conn).expect("migrar para v5");
+
+        let version: i32 = db
+            .conn()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .expect("ler user_version");
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let colunas: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('playlist_item')
+                 WHERE name IN ('deleted', 'deleted_at')",
+                [],
+                |r| r.get(0),
+            )
+            .expect("consultar colunas");
+        assert_eq!(colunas, 2, "o túmulo de playlist_item não foi criado");
     }
 }
