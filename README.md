@@ -244,8 +244,19 @@ grava no álbum inteiro, não só na faixa clicada — é o álbum que carrega a
 capa no índice, então uma escolha vale pra toda faixa dele.
 
 A sidebar de playlists segue a mesma linguagem: linha alta, destaque recuado
-e arredondado, marca de acento de 2px em quem está ativo — biblioteca ou uma
-playlist, nunca as duas.
+e arredondado, marca de acento de 2px em quem está ativo — biblioteca, uma
+playlist ou um artista, nunca mais de uma.
+
+**Ver só um artista**: botão direito numa faixa → "Ver só faixas de X". A
+lista passa a mostrar só as faixas dele (como intérprete da faixa ou como
+artista do álbum — uma coletânea onde ele aparece "feat." ainda conta), e a
+sidebar mostra o nome recuado sob BIBLIOTECA, marcado como a fonte atual.
+Clicar em BIBLIOTECA volta pra biblioteca inteira. Não tem lista de artistas
+navegável na sidebar: com centenas de artistas viraria uma coluna infinita,
+e o caminho "estou olhando uma faixa, quero mais desse artista" cobre o
+essencial sem ocupar espaço fixo. Reusa `Source` (agora com um braço
+`Artist`) e todo o resto — busca, ordenação, fila — funciona dentro do
+recorte.
 
 Uma playlist pode ser **vinculada a uma pasta** (botão direito → "Vincular
 pasta…"): toda faixa que está, ou vier a entrar, dentro dela passa a fazer
@@ -281,7 +292,9 @@ os botões de minimizar/maximizar/fechar são vetoriais, no mesmo traço do
 resto da interface (fechar fica vermelho, a única concessão fora da paleta
 de acento único — convenção forte demais pra abrir mão). O modo compacto
 ganhou o mesmo arraste, senão perderia a única razão de existir ("fica num
-canto da tela") sem ter mais barra nativa pra arrastar. Resultado:
+canto da tela") sem ter mais barra nativa pra arrastar — e, pelo mesmo
+motivo, no modo compacto a janela fica sempre por cima das outras
+(`WindowLevel::AlwaysOnTop`), voltando ao normal ao sair. Resultado:
 a janela fica com a mesma cara em qualquer ambiente — XFCE, GNOME, KDE — em
 vez de herdar o que cada um decidir desenhar.
 
@@ -379,7 +392,7 @@ própria cópia ou reimplementação.
 | `R` | repetir (desligado → tudo → uma → desligado) |
 | `Ctrl+M` | modo compacto |
 | duplo clique | tocar a faixa |
-| botão direito numa faixa | adicionar a playlist, mover, remover |
+| botão direito numa faixa | ver só faixas do artista, adicionar a playlist, mover, remover |
 | botão direito numa playlist | renomear, apagar, vincular/desvincular pasta |
 
 ## Desenvolvimento

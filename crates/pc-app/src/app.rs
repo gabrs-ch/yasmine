@@ -21,7 +21,7 @@ use player_audio::{Engine, Event};
 use player_core::library::{self, Sort, Stats, TrackRow};
 use player_core::playlist::{self, Playlist};
 use player_core::scan::scan_with_progress;
-use player_core::{ArtCache, Db, TrackId};
+use player_core::{ArtCache, ArtistId, Db, TrackId};
 use uuid::Uuid;
 
 use crate::art::ArtLoader;
@@ -97,6 +97,9 @@ pub const NORMAL_MIN_SIZE: egui::Vec2 = egui::Vec2::new(620.0, 380.0);
 enum Source {
     Library,
     Playlist(Uuid),
+    /// Só as faixas de um artista. O nome pra exibir fica em
+    /// `App::artist_name` — `Source` é `Copy` e não carrega `String`.
+    Artist(ArtistId),
 }
 
 struct ScanJob {
@@ -142,6 +145,10 @@ pub struct App {
     /// índice guardado passaria a apontar para outra faixa. O id não.
     now_id: Option<TrackId>,
     now: Option<TrackRow>,
+
+    /// Nome do artista quando `source` é `Source::Artist` — só pra mostrar
+    /// na sidebar. `None` em qualquer outra fonte.
+    artist_name: Option<String>,
 
     scan: Option<ScanJob>,
     /// Chegou mudança do disco enquanto um scan já rodava.
@@ -242,6 +249,7 @@ impl App {
             paths,
             root,
             source: Source::Library,
+            artist_name: None,
             view: Vec::new(),
             view_positions: Vec::new(),
             query: String::new(),
@@ -317,6 +325,10 @@ impl App {
                 self.view = library::search(&self.db, &self.query, self.sort).unwrap_or_default();
                 self.view_positions.clear();
             }
+            Source::Artist(id) => {
+                self.view = library::by_artist(&self.db, id, self.sort).unwrap_or_default();
+                self.view_positions.clear();
+            }
             Source::Playlist(id) => {
                 // Uma consulta só: dá tanto a lista de faixas tocáveis quanto
                 // a posição de cada uma, sem duas idas ao banco.
@@ -336,13 +348,24 @@ impl App {
         self.selected = None;
     }
 
-    /// Troca a fonte da lista (biblioteca ou uma playlist) e recarrega.
+    /// Troca a fonte da lista e recarrega. Sair de um filtro de artista pra
+    /// qualquer coisa que não seja outro artista limpa o nome guardado.
     fn set_source(&mut self, source: Source) {
         if self.source == source {
             return;
         }
+        if !matches!(source, Source::Artist(_)) {
+            self.artist_name = None;
+        }
         self.source = source;
         self.reload();
+    }
+
+    /// Passa a listar só as faixas de um artista. `name` vem da linha em que
+    /// o usuário clicou — não custa uma consulta pra reencontrar.
+    fn view_artist(&mut self, id: ArtistId, name: String) {
+        self.artist_name = Some(name);
+        self.set_source(Source::Artist(id));
     }
 
     /// Cria uma playlist e a deixa pronta para o usuário nomear.
@@ -895,6 +918,11 @@ impl App {
                         .map_or_else(String::new, |p| {
                             format!("{}  ·  {} faixas", p.name, p.items)
                         }),
+                    (None, Source::Artist(_)) => format!(
+                        "{}  ·  {} faixas",
+                        self.artist_name.as_deref().unwrap_or("artista"),
+                        self.view.len()
+                    ),
                     (None, Source::Library) => format!(
                         "{} faixas · {} álbuns · {} artistas",
                         self.stats.tracks, self.stats.albums, self.stats.artists
@@ -927,8 +955,14 @@ impl App {
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(6.0);
 
-        if sidebar_row(ui, "BIBLIOTECA", self.source == Source::Library).clicked() {
+        if sidebar_row(ui, "BIBLIOTECA", self.source == Source::Library, 0.0).clicked() {
             self.set_source(Source::Library);
+        }
+        // Filtro de artista ativo: uma linha recuada logo abaixo, marcada
+        // como a fonte atual. Clicar em BIBLIOTECA acima limpa o filtro;
+        // clicar aqui não faz nada (já está aqui).
+        if let (Source::Artist(_), Some(name)) = (self.source, self.artist_name.clone()) {
+            sidebar_row(ui, &name, true, 14.0);
         }
 
         ui.add_space(14.0);
@@ -986,7 +1020,7 @@ impl App {
             }
 
             let label = format!("{}  ({})", pl.name, pl.items);
-            let row = sidebar_row(ui, &label, is_active);
+            let row = sidebar_row(ui, &label, is_active, 0.0);
             if row.clicked() {
                 self.set_source(Source::Playlist(pl.id));
             }
@@ -1066,6 +1100,7 @@ impl App {
                     Source::Playlist(_) => {
                         "Esta playlist está vazia. Botão direito numa faixa da biblioteca para adicionar."
                     }
+                    Source::Artist(_) => "Nenhuma faixa desse artista.",
                     Source::Library if self.query.is_empty() => "Nenhuma faixa indexada nessa pasta.",
                     Source::Library => "Nada encontrado.",
                 };
@@ -1221,7 +1256,18 @@ impl App {
                     }
 
                     let track = row.id;
+                    let artist = row.artist_id.zip(row.artist.clone());
                     response.context_menu(|ui| {
+                        if let Some((aid, aname)) = &artist
+                            && !matches!(self.source, Source::Artist(id) if id == *aid)
+                        {
+                            if ui.button(format!("Ver só faixas de {aname}")).clicked() {
+                                self.view_artist(*aid, aname.clone());
+                                ui.close();
+                            }
+                            ui.separator();
+                        }
+
                         ui.menu_button("Adicionar à playlist", |ui| {
                             for pl in &playlists {
                                 if ui.button(&pl.name).clicked() {
@@ -1614,6 +1660,16 @@ impl App {
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min));
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target));
+
+        // No modo compacto a janela fica sempre por cima — o ponto dela é
+        // ficar visível num canto enquanto se usa outra coisa. Volta ao
+        // normal ao sair.
+        let level = if self.mini {
+            egui::WindowLevel::AlwaysOnTop
+        } else {
+            egui::WindowLevel::Normal
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
@@ -1839,7 +1895,7 @@ impl Columns {
 /// Uma linha da sidebar: rótulo alinhado à esquerda, marca de acento quando
 /// ativa. Mesma linguagem visual da lista de faixas — a régua de 2px que
 /// destaca "o que está tocando" aqui destaca "o que está selecionado".
-fn sidebar_row(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+fn sidebar_row(ui: &mut egui::Ui, label: &str, active: bool, indent: f32) -> egui::Response {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, theme::ROW_HEIGHT), Sense::click());
     let painter = ui.painter();
@@ -1857,9 +1913,10 @@ fn sidebar_row(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
     }
 
     let color = if active { theme::ACCENT } else { theme::TEXT };
+    let left = rect.left() + 10.0 + indent;
     let text_rect = Rect::from_min_size(
-        pos2(rect.left() + 10.0, rect.top()),
-        vec2((rect.width() - 16.0).max(0.0), rect.height()),
+        pos2(left, rect.top()),
+        vec2((rect.right() - 6.0 - left).max(0.0), rect.height()),
     );
     cell(painter, text_rect, label, theme::body(), color);
 

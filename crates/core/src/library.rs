@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::types::Value;
 
 use crate::db::{Db, Result};
-use crate::model::TrackId;
+use crate::model::{ArtistId, TrackId};
 
 /// Ordem da lista.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -48,6 +48,9 @@ pub struct TrackRow {
     pub id: TrackId,
     pub title: String,
     pub artist: Option<String>,
+    /// Id do intérprete — o que "ver só faixas deste artista" precisa; o
+    /// nome sozinho não serve, dois artistas podem ter o mesmo.
+    pub artist_id: Option<ArtistId>,
     pub album: Option<String>,
     pub track_no: Option<u32>,
     pub duration_ms: Option<u64>,
@@ -99,6 +102,23 @@ pub fn search(db: &Db, query: &str, sort: Sort) -> Result<Vec<TrackId>> {
     Ok(ids.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Faixas de um artista, na ordem pedida — como intérprete da faixa **ou**
+/// como artista do álbum, pra que uma faixa "feat. outro" numa coletânea
+/// dele ainda apareça quando o usuário pede "só esse artista".
+pub fn by_artist(db: &Db, artist: ArtistId, sort: Sort) -> Result<Vec<TrackId>> {
+    let sql = format!(
+        "SELECT t.id FROM track t
+         LEFT JOIN artist aa ON aa.id = t.album_artist_id
+         LEFT JOIN album  al ON al.id = t.album_id
+         WHERE t.artist_id = ?1 OR t.album_artist_id = ?1
+         ORDER BY {}",
+        sort.order_by()
+    );
+    let mut stmt = db.conn().prepare(&sql)?;
+    let ids = stmt.query_map([artist.0], |row| row.get::<_, i64>(0).map(TrackId))?;
+    Ok(ids.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Traduz o que o usuário digitou numa expressão FTS5 segura.
 ///
 /// Cada palavra vira um termo com prefixo (`palavra*`), e todas precisam
@@ -132,7 +152,7 @@ pub fn rows(db: &Db, ids: &[TrackId]) -> Result<Vec<TrackRow>> {
 
     let values: Vec<Value> = ids.iter().map(|id| Value::from(id.0)).collect();
     let mut stmt = db.conn().prepare_cached(
-        "SELECT t.id, t.title, ar.name, al.title, t.track_no, t.duration_ms, ca.blob_hash
+        "SELECT t.id, t.title, ar.name, t.artist_id, al.title, t.track_no, t.duration_ms, ca.blob_hash
          FROM track t
          LEFT JOIN artist ar    ON ar.id = t.artist_id
          LEFT JOIN album  al    ON al.id = t.album_id
@@ -141,14 +161,15 @@ pub fn rows(db: &Db, ids: &[TrackId]) -> Result<Vec<TrackRow>> {
     )?;
 
     let found = stmt.query_map([std::rc::Rc::new(values)], |row| {
-        let hash: Option<Vec<u8>> = row.get(6)?;
+        let hash: Option<Vec<u8>> = row.get(7)?;
         Ok(TrackRow {
             id: TrackId(row.get(0)?),
             title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
             artist: row.get(2)?,
-            album: row.get(3)?,
-            track_no: row.get(4)?,
-            duration_ms: row.get::<_, Option<i64>>(5)?.map(|d| d as u64),
+            artist_id: row.get::<_, Option<i64>>(3)?.map(ArtistId),
+            album: row.get(4)?,
+            track_no: row.get(5)?,
+            duration_ms: row.get::<_, Option<i64>>(6)?.map(|d| d as u64),
             art_hash: hash.and_then(|h| <[u8; 32]>::try_from(h.as_slice()).ok()),
         })
     })?;
@@ -290,6 +311,30 @@ mod tests {
         // crus do nome.
         assert_eq!(linhas[0].artist.as_deref(), Some("ABBA"));
         assert_eq!(linhas[1].artist.as_deref(), Some("Legião Urbana"));
+    }
+
+    #[test]
+    fn by_artist_traz_so_as_faixas_daquele_artista() {
+        let (db, _env) = biblioteca("por-artista");
+        let ids = view(&db, Sort::ArtistAlbum).expect("view");
+        let linhas = rows(&db, &ids).expect("linhas");
+
+        // Pega o id do artista a partir de uma faixa da Legião.
+        let legiao = linhas
+            .iter()
+            .find(|r| r.artist.as_deref() == Some("Legião Urbana"))
+            .and_then(|r| r.artist_id)
+            .expect("faixa da Legião tem artist_id");
+
+        let so_legiao = by_artist(&db, legiao, Sort::ArtistAlbum).expect("por artista");
+        assert_eq!(so_legiao.len(), 2);
+
+        let nomes: Vec<_> = rows(&db, &so_legiao)
+            .expect("linhas")
+            .into_iter()
+            .map(|r| r.artist)
+            .collect();
+        assert!(nomes.iter().all(|a| a.as_deref() == Some("Legião Urbana")));
     }
 
     #[test]
