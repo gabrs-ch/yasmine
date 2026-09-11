@@ -1,8 +1,41 @@
 # Yasmine
 
 Player de música local para PC e Android, com sync direto por LAN — sem
-conta, sem nuvem, sem servidor. O usuário aponta uma pasta; para sincronizar
-com o celular, mostra um QR code.
+conta, sem nuvem, sem servidor. Para quem compra a música e quer ouvir nos
+dois aparelhos sem pedir licença pra ninguém.
+
+## Por que existe
+
+O streaming resolveu o acesso e quebrou a remuneração. O pagamento por
+execução concentra a receita no topo do catálogo: quem não tem escala
+recebe frações de centavo por play, e serviços passaram a desmonetizar
+faixas abaixo de um piso anual de execuções. Comprar um álbum direto —
+Bandcamp, a loja do selo, um Pix depois do show — entrega numa compra o
+que levaria milhares de execuções pra render.
+
+Só que quem compra fica com o pior dos dois mundos: um punhado de arquivos
+numa pasta e nenhum jeito decente de ouvir. Os players locais ou pararam no
+tempo, ou são um gerenciador de arquivos com botão de play, ou querem que
+você suba a coleção pro servidor deles — o que recria exatamente a
+dependência de que você tentou sair.
+
+E o plano gratuito dos streamings é desenhado pra incomodar: anúncio,
+ordem de reprodução limitada, qualidade reduzida, sem offline.
+
+Yasmine é a outra ponta disso. Você compra, o arquivo é seu, e o player
+trata esse caso como o normal em vez de exceção. Aponta a pasta no PC,
+mostra um QR pro celular, e a biblioteca inteira — com playlists, contagem
+de plays e rating — fica nos dois lados. Nada expira, nada precisa de
+conexão depois que baixou, e não existe servidor no meio pra sair do ar.
+
+## Escopo
+
+**Faz:** indexa uma pasta, toca, busca, playlists, nivela volume entre
+faixas de origens diferentes, e sincroniza PC → celular pela rede local.
+
+**Não faz:** catálogo, recomendação, loja, conta, scrobble pra serviço
+nenhum. Não baixa música de lugar nenhum — a música entra pela pasta que
+você apontou, vinda de onde você comprou.
 
 ## Instalação
 
@@ -59,10 +92,11 @@ O APK é outro caminho — `scripts/build-apk.sh`, ver
 
 ## Sync com o celular
 
-Botão do telefone na barra do topo abre um painel com um QR code. O app
-Android lê, e a biblioteca inteira do PC — arquivos, playlists, plays,
+Você comprou uma vez; ouvir no celular não devia custar assinatura nem
+upload. Botão do telefone na barra do topo abre um painel com um QR code. O
+app Android lê, e a biblioteca inteira do PC — arquivos, playlists, plays,
 rating — desce pro celular. Depois disso o celular tem biblioteca própria e
-toca offline.
+toca offline, com o PC desligado.
 
 O canal é Noise sobre TCP na LAN; o QR carrega a chave pública do PC, que é
 a credencial. O sync é **pull**: o PC responde a pedidos e nunca é
@@ -74,11 +108,15 @@ O formato no fio está em [`docs/protocolo-sync.md`](docs/protocolo-sync.md).
 
 ## Princípios
 
-1. **Otimização é o critério de desempate** em toda decisão técnica.
-2. **Nenhuma otimização vira configuração.** Não existe "modo performance",
+1. **O arquivo é do usuário, e o app é descartável.** A metadata que vale é
+   a que está no arquivo; o banco é cache derivado que dá pra jogar fora e
+   reconstruir. Desinstalar não leva a coleção junto, e nenhuma decisão do
+   projeto pode depender de o Yasmine continuar existindo.
+2. **Otimização é o critério de desempate** em toda decisão técnica.
+3. **Nenhuma otimização vira configuração.** Não existe "modo performance",
    ajuste de buffer nem limpeza manual de cache. O default é o melhor que a
    gente consegue, e é invisível.
-3. Cada fase entrega algo usável.
+4. Cada fase entrega algo usável.
 
 ## Mapa do repositório
 
@@ -130,10 +168,13 @@ lista, 512px pra capa em destaque), reamostradas com Lanczos3 — a redução
 roda uma vez por capa, dentro do worker paralelo do scan que já é I/O bound,
 então o custo a mais não aparece no relógio.
 
-**Arquivo manda na metadata; o DB é cache derivado.** Estado do usuário
-(playlist, plays, rating) vive à parte, com timestamp por campo. É o que
-barateia o sync: áudio vira transferência endereçada por conteúdo, sem
-conflito possível, e só o estado do usuário precisa de merge.
+**Arquivo manda na metadata; o DB é cache derivado.** Álbum comprado vem
+com tag e capa decentes — a fonte da verdade é o arquivo, e apagar o banco e
+reescanear devolve o mesmo estado. Estado do usuário (playlist, plays,
+rating) vive à parte, com timestamp por campo, porque esse não dá pra
+reconstruir. É também o que barateia o sync: áudio vira transferência
+endereçada por conteúdo, sem conflito possível, e só o estado do usuário
+precisa de merge.
 
 **Item de playlist aponta pelo hash da faixa, não pelo id.** `track.id` é
 autoincrement local: o mesmo arquivo tem id diferente em cada device. Um
