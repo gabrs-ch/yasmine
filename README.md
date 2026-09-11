@@ -1,33 +1,39 @@
 # Yasmine
 
-Player de música para PC (Rust) e Android, com sync direto por LAN — sem
-conta, sem nuvem, sem servidor. O usuário aponta uma pasta; para sincronizar,
-aponta o outro device.
+Player de música local para PC e Android, com sync direto por LAN — sem
+conta, sem nuvem, sem servidor. O usuário aponta uma pasta; para sincronizar
+com o celular, mostra um QR code.
 
 ## Instalação
 
 **[github.com/gabrs-ch/yasmine/releases/latest](https://github.com/gabrs-ch/yasmine/releases/latest)**
 
-- **Windows**: duas opções.
-  - `Yasmine_*_windows_portable.zip` — extraia e dê duplo clique no
-    `yasmine.exe`. Portátil, não instala nada; apagar é apagar a pasta.
-  - `Yasmine_*-setup.exe` — instala só pro usuário atual (sem admin) e
-    registra o "Abrir com" pros formatos de áudio.
+**Windows** — duas opções:
 
-  O Windows pode avisar "O Windows protegeu seu PC" na primeira vez (não é
-  assinado) — "Mais informações" → "Executar assim mesmo". A interface usa o
-  **WebView2**, que o Windows 11 já traz; nas raras máquinas sem ele o
-  `setup.exe` baixa e adiciona na hora (o `.zip` portátil só roda se o
-  WebView2 já estiver presente).
-- **Linux**: o pacote nativo é o caminho confiável — usa o **WebKitGTK** da
-  própria distro (o gerenciador resolve a dependência) e o "Abrir com" já
-  vem configurado.
-  - Debian/Ubuntu/Mint/Pop: `sudo apt install ./Yasmine_*_amd64.deb`
-  - Fedora/Nobara/RHEL/openSUSE: `sudo dnf install ./Yasmine-*.x86_64.rpm`
-  - `Yasmine_*.AppImage` (um arquivo só, sem root) também existe, com o
-    WebKitGTK embutido — mas a mistura de libs empacotadas com as do host
-    faz o `WebKitWebProcess` abortar em distros fora da família Ubuntu
-    (visto no Fedora 44). Se acontecer, use o `.deb`/`.rpm`.
+- `Yasmine_*_windows_portable.zip` — extraia e dê duplo clique no
+  `yasmine.exe`. Portátil, não instala nada; apagar é apagar a pasta.
+- `Yasmine_*-setup.exe` — instala só pro usuário atual (sem admin) e
+  registra o "Abrir com" pros formatos de áudio.
+
+O Windows pode avisar "O Windows protegeu seu PC" na primeira vez (não é
+assinado) — "Mais informações" → "Executar assim mesmo". A interface usa o
+**WebView2**, que o Windows 11 já traz; nas raras máquinas sem ele o
+`setup.exe` baixa e adiciona na hora (o `.zip` portátil só roda se o WebView2
+já estiver presente).
+
+**Linux** — o pacote nativo é o caminho confiável: usa o **WebKitGTK** da
+própria distro (o gerenciador resolve a dependência) e o "Abrir com" já vem
+configurado.
+
+- Debian/Ubuntu/Mint/Pop: `sudo apt install ./Yasmine_*_amd64.deb`
+- Fedora/Nobara/RHEL/openSUSE: `sudo dnf install ./Yasmine-*.x86_64.rpm`
+- `Yasmine_*.AppImage` (um arquivo só, sem root) também existe, com o
+  WebKitGTK embutido — mas a mistura de libs empacotadas com as do host faz
+  o `WebKitWebProcess` abortar em distros fora da família Ubuntu (visto no
+  Fedora 44). Se acontecer, use o `.deb`/`.rpm`.
+
+**Android** — `Yasmine_*_android.apk` na mesma página. Universal, instala
+direto. Detalhes em [`docs/android.md`](docs/android.md).
 
 A única coisa que fica no sistema é a pasta de dados do player (índice da
 biblioteca e cache de capa, nos diretórios padrão).
@@ -35,20 +41,36 @@ biblioteca e cache de capa, nos diretórios padrão).
 O "Abrir com" do gerenciador de arquivos abre um ou vários arquivos de áudio
 de uma vez, aponta a biblioteca pra pasta deles e toca a partir do primeiro.
 
-### Compilar você mesmo
+### Compilar
 
-Precisa de toolchain Rust estável ([rustup.rs](https://rustup.rs)),
-Node 20+ e, no Linux, os `-dev` do WebKitGTK
-(`libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev`).
+Toolchain Rust estável ([rustup.rs](https://rustup.rs)), Node 20+ e, no
+Linux, os `-dev` do WebKitGTK (`libwebkit2gtk-4.1-dev libgtk-3-dev
+libsoup-3.0-dev librsvg2-dev`).
 
-```
+```sh
 cargo install tauri-cli --version "^2.0"
 npm --prefix crates/pc-app/ui ci
-cargo tauri dev     --config crates/pc-app/tauri.conf.json   # rodar
-cargo tauri build   --config crates/pc-app/tauri.conf.json   # empacotar
+cargo tauri dev   --config crates/pc-app/tauri.conf.json   # rodar
+cargo tauri build --config crates/pc-app/tauri.conf.json   # empacotar
 ```
 
-(ou `cd crates/pc-app && cargo tauri dev` / `build`.)
+O APK é outro caminho — `scripts/build-apk.sh`, ver
+[`docs/android.md`](docs/android.md).
+
+## Sync com o celular
+
+Botão do telefone na barra do topo abre um painel com um QR code. O app
+Android lê, e a biblioteca inteira do PC — arquivos, playlists, plays,
+rating — desce pro celular. Depois disso o celular tem biblioteca própria e
+toca offline.
+
+O canal é Noise sobre TCP na LAN; o QR carrega a chave pública do PC, que é
+a credencial. O sync é **pull**: o PC responde a pedidos e nunca é
+modificado pelo celular.
+
+→ **[`docs/sync.md`](docs/sync.md)** descreve o recurso ponta a ponta:
+modelo de confiança, as duas camadas de dados, merge, garantias e limites.
+O formato no fio está em [`docs/protocolo-sync.md`](docs/protocolo-sync.md).
 
 ## Princípios
 
@@ -58,23 +80,20 @@ cargo tauri build   --config crates/pc-app/tauri.conf.json   # empacotar
    gente consegue, e é invisível.
 3. Cada fase entrega algo usável.
 
-## Crates
+## Mapa do repositório
 
-| Crate | Papel |
+| Caminho | Papel |
 |---|---|
-| `crates/core` | Modelo, schema, índice. Compartilhado entre PC e Android. |
+| `crates/core` | Modelo, schema, índice, scan, consultas. Compartilhado entre PC e Android. |
 | `crates/audio` | Decode e playback no PC (`cpal` + `symphonia`). Não vai pro Android. |
-| `crates/sync` | Pareamento por QR, mDNS, canal Noise, protocolo de transferência, merge CRDT. Isolado: é o único que fala com a rede. |
-| `crates/sync-host` | Binário do lado PC (`yasmine-sync-host`): mostra o QR e serve a biblioteca pro celular. |
-| `crates/pc-app` | App desktop: back Rust (Tauri 2) + front web em `ui/` (React/TS). |
+| `crates/sync` | Pareamento por QR, mDNS, canal Noise, transferência, merge. Único crate que fala com a rede. |
+| `crates/sync-host` | `yasmine-sync-host`: serve a biblioteca sem abrir a UI. |
+| `crates/pc-app` | App desktop: back Rust (Tauri 2) + front React/TS em `ui/`. |
 | `crates/android-ffi` | Ponte uniffi (`YasmineLibrary` + `Syncer`) → Kotlin. |
-| `android/` | App Android (Kotlin/Compose + ExoPlayer + CameraX). `scripts/build-apk.sh`. |
+| `android/` | App Android (Compose + ExoPlayer + CameraX). |
 | `tools/libgen` | Gerador de biblioteca sintética para medição. |
-
-O binário do player chama-se `yasmine`; o do host de sync,
-`yasmine-sync-host`. O sync local (PC ↔ Android por QR) é a
-[Fase 4](docs/decisoes-fase-4.md) — [protocolo de fio](docs/protocolo-sync.md),
-[como testar](docs/teste-sync.md).
+| `docs/` | [arquitetura](docs/arquitetura.md) · [sync](docs/sync.md) · [protocolo](docs/protocolo-sync.md) · [android](docs/android.md) · [teste do sync](docs/teste-sync.md) |
+| `design/` | Mockup aprovado e histórico da migração pro Tauri. |
 
 ## Decisões fechadas
 
@@ -83,22 +102,19 @@ foi `egui`/`eframe`: um binário, zero dependência de runtime, cold start
 rápido. Mas o teto visual do modo imediato é baixo pra este trabalho —
 `letter-spacing`, transição/animação, gradiente livre, layout que centra de
 verdade, AA de texto. O Tauri renderiza o front (React/TS em
-[`crates/pc-app/ui`](crates/pc-app/ui)) no webview que o SO já traz
-(WebKitGTK no Linux, WebView2 no Windows), então CSS de verdade e o mockup
-vira código. Custo assumido: +RAM (~50 → ~150 MB), cold start mais lento, e a
-dependência de runtime — no Linux o AppImage a embute (81 MB, um arquivo só,
-sem root, como antes); no Windows o WebView2 já vem no Win11 e o instalador
-adiciona se faltar. O core (`player-core`, `player-audio`, `player-sync`) e o
-app Android não mudaram. Histórico e plano da migração em
-[`design/`](design/).
+[`crates/pc-app/ui`](crates/pc-app/ui)) no webview que o SO já traz, então
+CSS de verdade e o mockup vira código. Custo assumido: +RAM (~50 → ~150 MB),
+cold start mais lento, e a dependência de runtime. Histórico e plano da
+migração em [`design/`](design/).
 
 **`cpal` + `symphonia` direto, sem `rodio`.** O rodio reamostra sempre que a
-taxa do device não bate com a do arquivo, com interpolação linear. Indo direto
-no cpal dá pra abrir o device *na taxa do arquivo* e eliminar a reamostragem.
-E o gapless sai quase de graça pré-decodificando no mesmo ring buffer.
+taxa do device não bate com a do arquivo, com interpolação linear. Indo
+direto no cpal dá pra abrir o device *na taxa do arquivo* e eliminar a
+reamostragem. E o gapless sai quase de graça pré-decodificando no mesmo ring
+buffer.
 
-**SQLite, definitivo.** WAL + `synchronous=NORMAL` + mmap. 50k faixas não chega
-perto de ser gargalo; o custo real está no I/O do scan.
+**SQLite, definitivo.** WAL + `synchronous=NORMAL` + mmap. 50k faixas não
+chega perto de ser gargalo; o custo real está no I/O do scan.
 
 **FTS5 com `remove_diacritics 2`.** Uma decisão resolve busca instantânea *e*
 acento: "jose" acha "José" sem coluna normalizada extra.
@@ -107,85 +123,136 @@ acento: "jose" acha "José" sem coluna normalizada extra.
 ordenado (400 KB para 50k faixas) e a UI busca só as linhas visíveis — nunca
 `LIMIT/OFFSET`, que é O(n).
 
-**Capa deduplicada por BLAKE3, miniaturas em disco.** É o maior consumidor de
-memória de um player: a mesma arte se repete em toda faixa do álbum. Original
-nunca entra na RAM. Duas miniaturas por capa (96px pra linha da lista, 512px
-pra capa em destaque), reamostradas com Lanczos3 — a redução roda uma vez
-por capa, dentro do worker paralelo do scan que já é I/O bound, então o
-custo a mais não aparece no relógio, mas a diferença aparece na tela.
+**Capa deduplicada por BLAKE3, miniaturas em disco.** É o maior consumidor
+de memória de um player: a mesma arte se repete em toda faixa do álbum.
+Original nunca entra na RAM. Duas miniaturas por capa (96px pra linha da
+lista, 512px pra capa em destaque), reamostradas com Lanczos3 — a redução
+roda uma vez por capa, dentro do worker paralelo do scan que já é I/O bound,
+então o custo a mais não aparece no relógio.
 
 **Arquivo manda na metadata; o DB é cache derivado.** Estado do usuário
 (playlist, plays, rating) vive à parte, com timestamp por campo. É o que
 barateia o sync: áudio vira transferência endereçada por conteúdo, sem
-conflito possível, e só o estado do usuário precisa de merge — LWW por campo,
-e `MAX` por (faixa, device) para contagem de plays, que somada não perde play
-nenhum.
+conflito possível, e só o estado do usuário precisa de merge.
 
-**No Android o ExoPlayer toca e o Rust indexa.** Notificação, tela de bloqueio,
-Bluetooth e Android Auto saem prontos e testados. O Rust é o **único** escritor
-do arquivo SQLite; o Kotlin só consulta via FFI.
+**Item de playlist aponta pelo hash da faixa, não pelo id.** `track.id` é
+autoincrement local: o mesmo arquivo tem id diferente em cada device. Um
+item sem faixa local vira buraco na lista, não desaparece — é a faixa que
+ainda não chegou por sync.
 
 **Índice fracionário pra posição de item de playlist.** Ver
 [`fracidx.rs`](crates/core/src/fracidx.rs). A posição é uma string, não um
 número: mover um item escreve uma linha em vez de renumerar a playlist
-inteira, e dois devices reordenando ao mesmo tempo não colidem quando o sync
-chegar. A chave tem parte inteira (a primeira letra codifica o tamanho), o que
-mantém 50 000 acréscimos em sequência em 4 bytes por chave — sem isso, seria
-bissecção pura e a chave cresceria a cada inserção no mesmo ponto.
+inteira, e dois devices reordenando ao mesmo tempo não colidem no merge. A
+chave tem parte inteira (a primeira letra codifica o tamanho), o que mantém
+50 000 acréscimos em sequência em 4 bytes por chave.
 
-**Item de playlist aponta pelo hash da faixa, não pelo id.** `track.id` é
-autoincrement local: o mesmo arquivo tem id diferente em cada device. Um item
-sem faixa local correspondente vira buraco na lista, não desaparece — é a
-faixa que ainda não chegou por sync.
+**Apagar é marcar.** Playlist e item de playlist deixam túmulo
+(`deleted`/`deleted_at`) em vez de sumir com a linha. Sem isso, "não tenho
+essa linha" é indistinguível de "apaguei", e o sync reintroduz o que foi
+removido.
 
-**Sem ícone de bandeja.** Por ora o modo compacto (`Ctrl+M` / botão pip) —
-janela encolhida a uma barrinha, sempre no topo — cobre o caso de "ficar
-tocando ocupando pouco espaço". Bandeja de verdade (Tauri tem API pronta) só
-se aparecer necessidade.
+**No Android o ExoPlayer toca e o Rust indexa.** Notificação, tela de
+bloqueio, Bluetooth e Android Auto saem prontos e testados. O Rust é o
+**único** escritor do arquivo SQLite; o Kotlin só consulta via FFI.
 
-**Nivelador de volume por RMS, não EBU R128/ReplayGain de verdade.** A medida
-"correta" de volume percebido usa filtro de ponderação-K e gating de trechos
-silenciosos (ITU-R BS.1770) — implementar esse filtro do zero é boa parte do
-trabalho de uma biblioteca de áudio inteira, para um ganho de precisão que não
-muda a decisão prática. RMS do sinal decodificado já resolve "essa faixa é
-gravada mais baixo que as outras" na esmagadora maioria dos casos, com uma
-fração do código. O ganho final nunca passa de `1 / pico` medido na faixa —
-sem isso, uma faixa gravada baixo mas com transientes agudos receberia o
-ganho cheio do RMS e estouraria 0 dBFS nesses trechos. Ver
-[`loudness.rs`](crates/audio/src/loudness.rs).
+**Nivelador de volume por RMS, não EBU R128/ReplayGain de verdade.** A
+medida "correta" de volume percebido usa filtro de ponderação-K e gating de
+trechos silenciosos (ITU-R BS.1770) — implementar esse filtro do zero é boa
+parte do trabalho de uma biblioteca de áudio inteira, para um ganho de
+precisão que não muda a decisão prática. RMS do sinal decodificado já
+resolve "essa faixa é gravada mais baixo que as outras" na esmagadora
+maioria dos casos. O ganho final nunca passa de `1 / pico` medido na faixa —
+sem isso, uma faixa gravada baixo mas com transientes agudos estouraria
+0 dBFS. Ver [`loudness.rs`](crates/audio/src/loudness.rs).
 
-**Medição em segundo plano roda sequencial, não em paralelo entre núcleos.**
-Ao contrário do hash (BLAKE3, ~1–3 GB/s, insignificante mesmo saturando todos
-os núcleos), decodificar áudio é caro, e essa tarefa pode rodar por minutos
-enquanto o usuário ouve música ao mesmo tempo. Um fan-out em todos os núcleos
-competiria com a decodificação da faixa que está tocando *agora*, e um
-glitch audível custa muito mais que terminar de nivelar a biblioteca alguns
-minutos mais cedo. Faixa nova toca sem nivelamento até a tarefa de fundo
-chegar nela — nunca espera a medição para começar a tocar.
+**A medição de volume roda sequencial, não em paralelo entre núcleos.** Ao
+contrário do hash (BLAKE3, ~1–3 GB/s, insignificante mesmo saturando os
+núcleos), decodificar áudio é caro, e essa tarefa pode rodar por minutos
+enquanto o usuário ouve música. Um fan-out competiria com a decodificação da
+faixa que está tocando *agora*, e um glitch audível custa mais que terminar
+de nivelar alguns minutos mais cedo. Faixa nova toca sem nivelamento até a
+tarefa de fundo chegar nela.
 
-**Volume mestre é a única preferência que o app lembra entre sessões.** Não é
-"configuração" no sentido que este projeto evita — é o mesmo tipo de memória
-que a pasta escolhida já tinha: básico o bastante para não contar como opção
-exposta, só como o app lembrando o que você já tinha ajustado.
+**Volume mestre é a única preferência que o app lembra entre sessões.** Não
+é "configuração" no sentido que este projeto evita — é o mesmo tipo de
+memória que a pasta escolhida já tinha.
+
+**Sem ícone de bandeja.** O modo compacto (`Ctrl+M`) — janela encolhida a
+uma faixa larga, sempre no topo — cobre "ficar tocando ocupando pouco
+espaço". Bandeja de verdade só se aparecer necessidade.
 
 ## Fases
 
 - [x] **0 — Fundamentos.** Workspace, schema, clippy/fmt no CI, gerador de biblioteca.
-- [x] **1 — Player PC.** Pasta → scan → índice → tocar. Lista, play/pause/next/prev, busca, seek.
-- [x] **2 — Polimento PC.** Fila, playlists, shuffle/repeat, atalhos, modo compacto, `notify`, nivelador de volume, profiling.
-- [ ] **3 — Android standalone.** Compose + `core` via uniffi.
-- [ ] **4 — Sync na LAN.** QR → mDNS → Noise → diff por hash.
-- [ ] **5 — Refinamento.** Profiling real, biblioteca grande, onboarding.
+- [x] **1 — Player PC.** Pasta → scan → índice → tocar. Lista, transporte, busca, seek.
+- [x] **2 — Polimento PC.** Fila, playlists, shuffle/repeat, atalhos, modo compacto, `notify`, nivelador de volume.
+- [x] **3 — Android.** Compose + ExoPlayer, `core` via uniffi.
+- [x] **4 — Sync na LAN.** QR → Noise → diff por hash → merge. Ver [`docs/sync.md`](docs/sync.md).
+- [ ] **5 — Refinamento.** Sync no sentido inverso, biblioteca grande, onboarding.
 
-[`docs/contexto-android.md`](docs/contexto-android.md) é o handoff pra
-quem for escrever o Android e o sync local: arquitetura, modelo de dados,
-o que se reaproveita do `core`, e o desenho do pareamento por QR + download
-das músicas do PC pro celular, com os pontos ainda em aberto.
+## Interface
+
+Direção visual: Apple Music, só que escuro — preto quase absoluto, cantos
+arredondados, linhas altas o bastante pra capa respirar, mono nos números.
+Substitui a direção original ("software de áudio profissional", cantos
+retos), que sem capa nenhuma lia como planilha, não como player. O
+roxo/azul da identidade é **acento único**: a marca na faixa tocando e o
+preenchimento da barra de progresso.
+
+O mockup aprovado está versionado em
+[`design/mockup.html`](design/mockup.html) e é a fonte da verdade de cada
+cor, raio e medida. Os tokens vivem no `:root` de
+[`app.css`](crates/pc-app/ui/src/styles/app.css); o app Android traduz os
+mesmos valores pra `darkColorScheme`, então os dois frontes têm a mesma
+paleta sem duplicar a decisão.
+
+A janela não usa decoração nativa. No Linux quem desenha o cabeçalho é o
+gerenciador de janelas do usuário — no XFCE, uma barra cinza clara genérica
+colada num conteúdo quase preto. A barra de comando do app *é* a barra de
+título: arrasta em área livre, e os botões de janela são desenhados junto
+com o resto. Como borda nenhuma vem do sistema, o app desenha a própria
+(`.win { border-radius }` sobre janela transparente) e oito faixas
+invisíveis nas bordas chamam `startResizeDragging`, que é o que a decoração
+nativa dava de graça.
+
+**Ícones**: [Lucide](https://lucide.dev) (ISC), via `lucide-react` no
+desktop e `material-icons-extended` no Android. Os quatro do transporte
+(prev/next/play/pause) são SVG inline — são cheios e simples, e o
+preenchimento do Lucide não bate com o desenho do mockup.
+
+**Texto**: [IBM Plex Sans](https://www.ibm.com/plex/) (OFL) e
+[JetBrains Mono](https://www.jetbrains.com/lp/mono/) (OFL, build "NL" — sem
+ligadura de programação, que não faz sentido pra exibir duração de faixa),
+embutidas nos dois apps. Plex é humanista, não a neogrotesca genérica: tem
+desenho próprio sem custar legibilidade em tamanho de UI.
+
+**A marca** é uma nota musical brotando folhas, roxa com gradiente, num
+quadrado arredondado — arte do usuário.
+[`assets/icon-source.png`](crates/pc-app/assets/icon-source.png) é o
+arquivo único: janela, atalho, tela de boas-vindas e o ícone do Android
+saem todos dele.
+
+## Atalhos (desktop)
+
+| | |
+|---|---|
+| `Espaço` | tocar / pausar |
+| `←` `→` | voltar / avançar 5 s |
+| `S` | shuffle |
+| `R` | repetir (desligado → tudo → uma → desligado) |
+| `Ctrl+M` | modo compacto |
+| duplo clique | tocar a faixa |
+| botão direito numa faixa | ver só faixas do artista, adicionar a playlist, mover, remover, escolher capa |
+| botão direito numa playlist | renomear, apagar, foto, vincular/desvincular pasta |
+
+No Android, toque longo abre o menu de contexto equivalente.
 
 ## Medições
 
 Numa VM de 4 núcleos e 3,8 GB, com renderização por software (sem GPU),
-biblioteca sintética de 50 000 faixas em 4 998 álbuns:
+biblioteca sintética de 50 000 faixas em 4 998 álbuns. Estes números são do
+`player-core` e valem pros dois frontes:
 
 | | |
 |---|---|
@@ -195,221 +262,21 @@ biblioteca sintética de 50 000 faixas em 4 998 álbuns:
 | Montar a lista ordenada | 22,9 ms (390 KB de ids) |
 | Buscar enquanto digita | 2,4 ms (2 044 resultados) |
 | Janela visível da lista | 0,1 ms (40 linhas) |
-| Janela aberta | ~530 ms |
-| **CPU com a janela aberta e parada** | **0%** |
+| Criar playlist com 50 000 faixas (hash de tudo, 1ª vez) | 410 ms |
+| Mesma operação, hash já calculado | 147 ms |
+| Ler a playlist de volta (50 000 itens) | 32,8 ms |
 | Playback | 0 underruns · 0,02 s de CPU em 3,3 s |
 
 A capa sintética é pequena; com capa real de 1000×1000 cada álbum novo custa
 ~5,8 ms de decode e resize, o que somaria ~8 s (em 4 threads) ao *primeiro*
-scan de 5 000 álbuns. Rescans não pagam nada disso.
+scan de 5 000 álbuns. Rescans não pagam nada disso. O hash é sobre arquivos
+sintéticos de ~16 KB; num álbum de verdade o custo desloca de CPU pra I/O —
+BLAKE3 satura a leitura bem antes de virar gargalo.
 
-Do RSS de 143 MB do app, 67 MB são o `libLLVM` do llvmpipe — o rasterizador
-OpenGL por software desta VM, que não existe numa máquina com driver de GPU.
-
-### Fase 2 — fila, playlists, modo compacto, vigia de arquivos
-
-Mesma biblioteca de 50 000 faixas, mais uma playlist com todas elas — o caso
-que estressa índice fracionário e hash sob demanda de uma vez:
-
-| | |
-|---|---|
-| Criar playlist com 50 000 faixas (hash de tudo, 1ª vez) | 410 ms |
-| Mesma operação, hash já calculado | 147 ms |
-| Ler a playlist de volta (50 000 itens) | 32,8 ms |
-| Listar playlists existentes | 2,6 ms |
-| RSS do app com biblioteca + playlist de 50 000 carregadas | 157 MB |
-| Rescan ao reabrir (conteúdo intacto) | 0,4 s |
-
-O hash é sobre arquivos sintéticos de ~16 KB; num álbum de verdade (3–10 MB
-por faixa) o custo desloca de CPU pra I/O de disco — BLAKE3 satura a leitura
-bem antes de virar o gargalo.
-
-**Descoberto testando a UI de verdade, não só a biblioteca `core`:** o modo
-compacto desenhava certinho para 340×112, mas a janela do SO ficava presa em
-620×380 — o `min_inner_size` configurado na abertura não tinha sido relaxado
-antes do pedido de encolher. E `xdotool getwindowgeometry`, usado nos scripts
-de teste desta sessão, reporta a posição do frame decorado pelo gerenciador
-de janelas, não da área cliente — um offset de ~24px que fazia clique em
-alvo pequeno (o botão "+" de nova playlist) errar sistematicamente, enquanto
-alvos grandes (linha da lista) toleravam o erro por sorte. `xwininfo -id`
-resolve a reparentagem corretamente e virou o método padrão de ali em diante.
-
-## Interface
-
-Direção visual: Apple Music, só que escuro. Substitui a direção original
-("software de áudio profissional", cantos retos em tudo) — densidade extrema
-sem capa nenhuma lia como planilha, não como player, e essa foi a queixa que
-motivou a virada. Preto quase absoluto continua, mas cantos arredondados
-(`theme::RADIUS`, um número só, usado em todo lugar) viraram a regra, não
-exceção pontual; linhas mais altas (44px, contra 22px antes) dão espaço pra
-capa respirar; réguas de 1px e mono nos números continuam.
-
-O roxo/azul da identidade continua **acento único** — a marca de 2px na
-faixa tocando e o preenchimento da barra de progresso — mas parou de ser a
-única coisa arredondada da interface.
-
-A capa aparece em toda parte agora: miniatura arredondada em cada linha da
-lista (carregada pelo `ArtLoader` já existente, sem custo extra — o cache de
-texturas já era dimensionado pra isso), no player, no modo compacto, e —
-novo — pode ser escolhida manualmente: botão direito numa faixa → "Escolher
-capa do álbum…" abre um seletor nativo de arquivo, decodifica pelo mesmo
-`ArtCache` do scan (dedup por hash, miniaturas geradas do mesmo jeito) e
-grava no álbum inteiro, não só na faixa clicada — é o álbum que carrega a
-capa no índice, então uma escolha vale pra toda faixa dele.
-
-A sidebar de playlists segue a mesma linguagem: linha alta, destaque recuado
-e arredondado, marca de acento de 2px em quem está ativo — biblioteca, uma
-playlist ou um artista, nunca mais de uma.
-
-**Ver só um artista**: botão direito numa faixa → "Ver só faixas de X". A
-lista passa a mostrar só as faixas dele (como intérprete da faixa ou como
-artista do álbum — uma coletânea onde ele aparece "feat." ainda conta), e a
-sidebar mostra o nome recuado sob BIBLIOTECA, marcado como a fonte atual.
-Clicar em BIBLIOTECA volta pra biblioteca inteira. Não tem lista de artistas
-navegável na sidebar: com centenas de artistas viraria uma coluna infinita,
-e o caminho "estou olhando uma faixa, quero mais desse artista" cobre o
-essencial sem ocupar espaço fixo. Reusa `Source` (agora com um braço
-`Artist`) e todo o resto — busca, ordenação, fila — funciona dentro do
-recorte.
-
-Uma playlist pode ser **vinculada a uma pasta** (botão direito → "Vincular
-pasta…"): toda faixa que está, ou vier a entrar, dentro dela passa a fazer
-parte da playlist sozinha, sem arrastar uma por uma. Guardado por (raiz,
-prefixo relativo) — não por caminho absoluto — pelo mesmo motivo de
-`track.rel_path`: mover a pasta de raiz inteira de lugar não invalida o
-vínculo. A sincronização roda depois de cada scan (manual ou pelo vigia de
-arquivos) e é idempotente: só acrescenta o que ainda não está lá, então um
-rescan repetido nunca duplica item.
-
-O controle de volume mestre e a barra de progresso são pílula com bolinha
-arrastável, no espírito do slider do Apple Music — um controle contínuo se
-lê melhor como objeto físico do que como dado tabular. Cor neutra no volume
-(não é "o que está tocando"), acento na barra de progresso (é). A bolinha da
-barra de progresso só aparece em hover/arraste, pra não pesar visualmente
-numa barra que fica sempre visível durante o playback inteiro. A área de
-clique/arraste dos dois é bem mais alta (20px) que o traço visual (4px):
-mirar exatamente numa linha fina é chato, e o alvo generoso não muda como a
-barra parece, só como ela responde. O preenchimento dos dois é gradiente, não
-cor chapada — faixas verticais finas com cor interpolada (`egui::Painter` não
-tem gradiente nativo), mesmo matiz nas duas pontas pra continuar sendo UM
-acento, só com luminosidade variando; no volume o gradiente fica no cinza,
-nunca no acento, porque volume não é "o que está tocando".
-
-A janela é sem decoração nativa (`with_decorations(false)`). No Linux, quem
-desenha o cabeçalho de uma janela é o gerenciador de janelas do usuário — no
-XFCE, um cabeçalho cinza claro genérico, colado direto num conteúdo quase
-preto sem nenhuma relação com ele. Era a costura mais feia da janela inteira,
-e nenhum ajuste de cor dentro do app resolvia, porque o app não desenhava
-aquela barra. Agora desenha: a própria barra de comando (`top_bar`) também é
-a barra de título — arrasta em área livre, duplo clique maximiza/restaura,
-os botões de minimizar/maximizar/fechar são vetoriais, no mesmo traço do
-resto da interface (fechar fica vermelho, a única concessão fora da paleta
-de acento único — convenção forte demais pra abrir mão). O modo compacto
-ganhou o mesmo arraste, senão perderia a única razão de existir ("fica num
-canto da tela") sem ter mais barra nativa pra arrastar — e, pelo mesmo
-motivo, no modo compacto a janela fica sempre por cima das outras
-(`WindowLevel::AlwaysOnTop`), voltando ao normal ao sair. Resultado:
-a janela fica com a mesma cara em qualquer ambiente — XFCE, GNOME, KDE — em
-vez de herdar o que cada um decidir desenhar.
-
-Duas coisas que a decoração nativa dava de graça e precisaram ser refeitas à
-mão: a margem entre o conteúdo e a quina da janela (a decoração *era* essa
-margem — sem ela, o botão de escolher pasta ficava colado no canto esquerdo
-e o de fechar no direito, ambos com 4px de folga contra uma quina totalmente
-reta, sem nenhum arredondamento do sistema pra suavizar) e o traço de 1px em
-volta da janela inteira (sem ele, o retângulo se perdia contra o fundo da
-área de trabalho por trás). Os dois voltaram: 12px de respiro nos cantos da
-barra de comando, e um `rect_stroke` na cor `RULE` desenhado numa camada de
-primeiro plano, por cima de tudo, já que não pertence a painel nenhum.
-
-A capa em destaque (player normal e modo compacto) ganhou um halo suave —
-anéis concêntricos do acento com alfa decrescente atrás do quadrado
-arredondado, a aproximação vetorial de um desfoque que o `Painter` não tem.
-Título da faixa tocando também cresceu (mesmo `TextStyle::Heading` que o
-resto da interface já reservava e não usava) e o título de cada linha da
-lista ganhou peso — sem fonte bold embutida no binário, o texto é desenhado
-duas vezes com um deslocamento de 0,4px, o mesmo truque de sempre pra
-contraste de peso sem arquivo extra. Um fio de 1px separa cada região da
-janela da vizinha (topo/lista, sidebar/lista, e um realce quase transparente
-no topo do player, como se ele flutuasse à frente) — antes a única
-articulação entre elas era a diferença de tom entre `PANEL` e `BG`.
-
-"Pasta…", a única ação possível antes de escolher uma biblioteca, é botão de
-ação primária (preenchido no acento) nesse momento específico — e só nesse:
-com a biblioteca carregada, "trocar de pasta" e "reescanear" viram ícones
-(pasta e setas circulares), com o que fazem no tooltip. Botão de texto na
-barra só quando o texto É a informação (a primeira escolha, numa tela vazia
-— e a tela de boas-vindas repete essa oferta grande, com o halo atrás da
-marca). Depois disso, ação ocasional não precisa de rótulo ocupando a
-barra. O campo de busca ganhou uma lupa à esquerda, mesma fonte de ícone do
-resto.
-
-**Todo ícone da interface** — transporte, shuffle/repeat/modo compacto, "+"
-de nova playlist, lupa da busca, pasta e reescanear, os três controles de
-janela — vem da mesma fonte: [Lucide](https://lucide.dev) (ISC, `assets/lucide.ttf`,
-`assets/LUCIDE-LICENSE.txt`), embutida no binário como qualquer outro
-asset. Começou como forma vetorial desenhada à mão (`Painter::line_segment`,
-`convex_polygon`) pela mesma razão de sempre — traço nítido garantido, sem
-depender de a fonte do sistema ter o símbolo certo — mas ícone bem desenhado
-é ofício de quem faz isso o dia inteiro, não de reinventar cada forma em
-coordenada de pixel. A fonte resolve os dois ao mesmo tempo: continua
-embutida (mesma garantia de traço, zero dependência do ambiente) e o
-desenho em si é o de gente que projeta ícone pra viver. Registrada como família
-`FontFamily::Name` própria (`theme::icon_family`), nunca entra nas famílias
-de texto normal — só quem chama `theme::icon()` explicitamente a enxerga.
-
-Os três controles de janela (minimizar/maximizar/fechar) merecem nota à
-parte: o Lucide tem ícones dedicados pra essas duas primeiras ações (setas
-de canto pra dentro/fora), visualmente mais originais que traço e quadrado
-— mas na prática lêem como "entrar/sair de tela cheia", não "minimizar pra
-barra de tarefas"/"maximizar". Testado, achado confuso, revertido pro
-traço e quadrado simples: a convenção universal existe por um motivo, e
-reconhecível vale mais que original numa ação que o usuário precisa
-identificar sem pensar. O fundo de hover dos três é círculo, não o
-cantos-arredondados do resto dos botões — um "controle de janela" lê melhor
-como forma fechada em si, no espírito dos três pontinhos do macOS, do que
-como mais um botão retangular na fileira.
-
-**Texto**: [IBM Plex Sans](https://www.ibm.com/plex/) (OFL,
-`assets/IBMPlexSans-{Regular,SemiBold}.ttf`) no lugar da fonte padrão que o
-`egui` já traz embutida, e [JetBrains Mono](https://www.jetbrains.com/lp/mono/)
-(OFL, build "NL" — sem ligadura de programação, que não faz sentido pra
-exibir duração de faixa) no lugar do mono padrão. A fonte padrão existe pra
-rodar em qualquer lugar sem asset nenhum; "roda em qualquer lugar" e
-"bonita" são objetivos diferentes, e só dá pra ter os dois embutindo a
-própria. Plex é humanista, não a neogrotesca genérica — tem calor e desenho
-próprio sem custar legibilidade em tamanho de UI (a rodada anterior com
-Inter lia como "software corporativo"). As duas entram com prioridade
-`Highest` nas famílias `Proportional`/`Monospace` — não substituem o que o
-`egui` já registrou ali, ficam na frente; o que sobra (emoji, por exemplo)
-continua caindo nas fontes padrão como reserva, em vez de sumir. O título da
-faixa — na lista e na barra do player — usa peso de verdade (`theme::strong`,
-a família SemiBold), não o texto desenhado duas vezes com deslocamento que
-fingia negrito antes de ter fonte com peso no binário.
-
-**A marca do Yasmine** é uma nota musical brotando folhas, roxa com
-gradiente, num quadrado arredondado claro — arte fornecida pelo usuário, no
-formato de ícone de app.
-[`assets/icon-256.png`](crates/pc-app/assets/icon-256.png) é o arquivo único
-— janela, atalho da área de trabalho e tela de boas-vindas do app carregam
-o mesmo PNG (com transparência em volta do quadrado) como textura, em vez de
-cada lugar ter sua própria cópia ou reimplementação.
-
-## Atalhos
-
-| | |
-|---|---|
-| `Espaço` | tocar / pausar |
-| `↑` `↓` | mover a seleção |
-| `←` `→` | faixa anterior / próxima |
-| `Enter` | tocar a seleção |
-| `Ctrl+F` | ir para a busca |
-| `S` | shuffle |
-| `R` | repetir (desligado → tudo → uma → desligado) |
-| `Ctrl+M` | modo compacto |
-| duplo clique | tocar a faixa |
-| botão direito numa faixa | ver só faixas do artista, adicionar a playlist, mover, remover |
-| botão direito numa playlist | renomear, apagar, vincular/desvincular pasta |
+Os números de janela e memória do app (cold start ~530 ms, 0% de CPU parado,
+143 MB de RSS) foram medidos na versão `egui`. O app Tauri troca isso pelo
+webview do SO — é o custo assumido na decisão lá em cima, e ainda não foi
+medido de novo.
 
 ## Desenvolvimento
 
@@ -426,19 +293,14 @@ mesma seed dá o mesmo corpus byte a byte:
 cargo run --release -p libgen -- --out ./testdata/lib50k --tracks 50000
 ```
 
-50k faixas em ~2s, ocupando 1,2 GB. Como regenerar é barato, o corpus grande
-não fica versionado nem guardado — `testdata/` está no `.gitignore`.
+50k faixas em ~2 s, ocupando 1,2 GB. Como regenerar é barato, o corpus
+grande não fica versionado — `testdata/` está no `.gitignore`.
 
 Medir o scan e as consultas contra uma pasta de verdade (rodar duas vezes: a
 segunda passada é o que mostra se o caminho incremental está funcionando):
 
 ```bash
 cargo run --release -p player-core --example scan -- ./testdata/lib50k /tmp/lib.db
-```
-
-Medir uma playlist grande (hash de tudo de uma vez, e leitura de volta):
-
-```bash
 cargo run --release -p player-core --example playlist_bench -- ./testdata/lib50k
 ```
 
@@ -447,3 +309,8 @@ Rodar o player apontado numa pasta:
 ```bash
 cargo tauri dev --config crates/pc-app/tauri.conf.json -- ./testdata/lib50k
 ```
+
+O sync tem teste ponta a ponta em `crates/sync/tests/sync_e2e.rs` — sobe um
+servidor de verdade sobre loopback e baixa uma biblioteca inteira, incluindo
+retomada após cancelamento e recusa de device não pareado. Procedimento de
+teste manual com celular: [`docs/teste-sync.md`](docs/teste-sync.md).

@@ -1,7 +1,12 @@
 # Migração da UI do PC: egui → Tauri
 
-`mockup.html` neste diretório é a fonte da verdade visual — abrir no
-navegador e comparar lado a lado com `cargo tauri dev`.
+Registro de como a migração foi feita, escrito na época (v0.5.0). Descreve
+o estado **daquele momento** — o crate de sync ainda se chamava
+`player-sync` e era um stub, e o app Android ainda não existia. Pra
+arquitetura atual, ver [`docs/arquitetura.md`](../docs/arquitetura.md).
+
+`mockup.html` neste diretório continua sendo a fonte da verdade visual —
+abrir no navegador e comparar lado a lado com `cargo tauri dev`.
 
 ## Por quê
 

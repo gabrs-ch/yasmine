@@ -1,64 +1,73 @@
-# Testar o sync PC ↔ Android ponta a ponta
+# Testar o sync ponta a ponta
 
-Pré-requisitos: PC e celular na **mesma rede WiFi**. O desktop Yasmine já
-migrado pra schema **v5** (release `v0.5.6` ou `git pull` do `main`).
+PC e celular na **mesma rede Wi-Fi**. O desktop precisa estar em schema v5
+(release `v0.5.6` ou posterior). Descrição do recurso em [`sync.md`](sync.md).
 
-## 1. Lado PC — subir o host
+## 1. PC — subir o servidor
 
-Da raiz deste repo:
+Pelo app: abre o Yasmine, clica no ícone de telefone na barra do topo. O
+painel mostra o QR e o status. (Precisa de uma pasta de música já apontada —
+sem biblioteca não há o que servir.)
+
+Sem abrir a UI:
 
 ```sh
-# CLI: imprime o QR no terminal (blocos unicode). Não precisa de lib extra.
-cargo run -p yasmine-sync-host -- --mdns
-
-# ou, com janela e QR grande (precisa: libxkbcommon-dev libgl1-mesa-dev):
-cargo run -p yasmine-sync-host --features gui -- --gui --mdns
+cargo run -p yasmine-sync-host -- --mdns              # QR no terminal
+cargo run -p yasmine-sync-host --features gui -- --gui --mdns   # janela
 ```
 
-Ele abre a **mesma** `~/.local/share/yasmine/library.db` que o app Yasmine
-usa, migra pra v5 se preciso, cria a identidade Noise (`meta.sync_sk`) e
-serve a biblioteca. O QR carrega `k` (chave = DeviceId), `h`/`p` (IP:porta
-da LAN) e `n` (nome).
+A variante `--gui` precisa de `libxkbcommon-dev` e `libgl1-mesa-dev`. Se a
+biblioteca ainda não foi indexada nesse banco: `--music ~/Musica`.
 
-**No primeiro teste, feche o app Yasmine desktop** — dois processos
-escrevendo a mesma `library.db` é seguro sob WAL, mas comece simples. Se
-a biblioteca ainda não foi indexada por lá: `--music ~/Musica`.
+**No primeiro teste, use um dos dois, não os dois juntos.** Os dois abrem o
+mesmo `library.db`; o WAL aguenta, mas comece simples.
 
-## 2. Lado celular
+## 2. Celular
 
-Instalar `dist/yasmine-debug-arm64.apk` (arm64, debug). Abrir → aba
-**Parear** → permitir a câmera → apontar pro QR → **Baixar**.
+Instala o `Yasmine_<versão>_android.apk`
+([releases](https://github.com/gabrs-ch/yasmine/releases/latest)). Abre →
+aba **Sync** → permite a câmera → aponta pro QR → **Download**.
 
-Acompanha o progresso (conectando → juntando playlists → comparando
-bibliotecas → baixando faixas → indexando). Dá pra **Cancelar**: o que já
-veio fica em `.part`, a próxima tentativa retoma.
+O progresso passa por *connecting → merging playlists → comparing libraries
+→ downloading → indexing*. Enquanto baixa, saia da tela de propósito: a
+notificação tem que continuar contando. Trave o celular também. Voltar pro
+app tem que mostrar o progresso de onde está, não recomeçar.
 
-No fim, a aba **Biblioteca** mostra as faixas (tocam pelo ExoPlayer:
-notificação, tela de bloqueio, Bluetooth) e as **Playlists** povoadas. As
-capas são regeneradas das tags no próprio celular.
+**Cancelar e retomar**: cancela no meio, confirma que os `.part` ficaram, e
+sincroniza de novo — tem que continuar de onde parou, não do zero.
 
-## 3. Conferir o merge (2ª rodada)
+No fim, na **Library**: faixas tocando pelo ExoPlayer (com notificação e
+tela de bloqueio), capas visíveis, e as **Playlists** povoadas.
 
-1. No celular: dar um rating numa faixa, criar/renomear/reordenar uma
-   playlist, apagar um item.
-2. Sincronizar de novo com o mesmo PC.
-3. Conferir que:
+## 3. Merge — segunda rodada
+
+O que valida a camada do usuário:
+
+1. No celular: dá um rating numa faixa, cria uma playlist, apaga um item de
+   outra.
+2. Sincroniza de novo com o mesmo PC.
+3. Confere:
+   - o item apagado **não** voltou (túmulo, schema v5);
    - rating e posição de retomada não se sobrescreveram (LWW por campo);
-   - o item apagado **não** voltou (túmulo v5);
-   - contagem de plays somou, não substituiu (G-counter).
+   - contagem de plays somou em vez de substituir (G-Counter).
 
-## 4. Conferir o desktop depois
+## 4. PC depois
 
-Reabrir o app Yasmine → a `library.db` continua legível (v5), as
-playlists intactas. Apagar um item de playlist na UI → some da lista e
+Reabre o app: o `library.db` continua legível, playlists intactas. Apagar um
+item de playlist na UI faz ele sumir da lista, e
 `SELECT count(*) FROM playlist_item WHERE deleted = 1` sobe.
+
+Confere também que o sync **não** tocou nos arquivos do PC — nem mtime, nem
+pasta, nem nada. O servidor só lê.
 
 ## Arestas conhecidas
 
-- O app desktop cacheia o estado em memória: pra ver o que veio no sync,
-  **reabrir** (ou trocar de fonte e voltar).
-- `SQLITE_BUSY` se o desktop estiver aberto e escrevendo durante o sync —
-  `busy_timeout = 5000` deve segurar; se der erro, feche o desktop e
-  repita.
-- IP manual (rede sem mDNS): a tela Parear tem "Digitar IP manualmente"
-  (device id hex do QR + `ip:porta`).
+- O app desktop cacheia o estado em memória. Pra ver o que chegou pelo sync,
+  reabra (ou troque de fonte e volte).
+- Se o desktop estiver aberto escrevendo durante o sync, pode dar
+  `SQLITE_BUSY` — `busy_timeout = 5000` costuma segurar; se der erro, feche
+  o desktop e repita.
+- A primeira conexão hasheia a biblioteca inteira no PC. Numa biblioteca
+  grande isso demora antes de o download começar. Só na primeira.
+- Rede sem mDNS: "Enter address manually" na tela de pareamento aceita o
+  device id em hex (vem no QR) e `ip:porta`.

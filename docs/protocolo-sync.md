@@ -1,6 +1,8 @@
 # Protocolo de sync (v1)
 
-Spec do que `crates/sync` fala no fio. Implementado em
+Spec do que `crates/sync` fala no fio. O recurso como um todo — o que o
+usuário faz, modelo de confiança, merge, garantias — está em
+[`sync.md`](sync.md); aqui é só o formato. Implementado em
 [`crates/sync/src/protocol.rs`](../crates/sync/src/protocol.rs) (mensagens),
 [`channel.rs`](../crates/sync/src/channel.rs) (canal), `server.rs`, `client.rs`.
 
@@ -65,14 +67,15 @@ do celular já aparece povoada enquanto os arquivos chegam.
 `{ hash, ext, size, title?, artist?, album?, album_artist?, disc_no?,
 track_no?, year?, genre? }`. Propriedades de stream (sample rate etc.) e capa
 **não** viajam: saem do próprio arquivo quando o celular roda `scan` na pasta
-baixada. A capa é regenerada das tags pelo `ArtCache` (preferência do doc de
-handoff — evita transferir imagem).
+baixada. A capa é regenerada das tags pelo `ArtCache` — transferir imagem
+seria banda gasta pra reproduzir o que o receptor deriva de graça.
 
 ### `UserLayer`
 
 Linhas cruas de `device`, `playlist`, `playlist_item`, `play_count`,
 `track_state`. O merge ([`merge.rs`](../crates/sync/src/merge.rs)) decide o
-que fica — ver [decisoes-fase-4.md](decisoes-fase-4.md).
+que fica — as regras e o porquê de cada uma estão em
+[`sync.md`](sync.md#merge-da-camada-do-usuário).
 
 ## 4. Download
 
@@ -88,7 +91,10 @@ No fim: `player_core::scan(dest)` indexa tudo (tags, stream, capa) e
 `ensure_hashes` nas faixas novas — os itens de playlist, que apontam por
 `track_key`, viram faixas tocáveis.
 
-## Otimizações que ficaram pra depois (v1 é o caminho simples)
+## Otimizações que ficaram pra depois
+
+A v1 é o caminho simples de propósito; cada item abaixo troca código por
+banda ou tempo, e nenhum é gargalo na escala atual.
 
 - **Resumo de hashes** (Bloom/Merkle) em vez de mandar N×32 bytes no `Have`.
 - **Diff por `(size, mtime)`** antes de forçar `ensure_hashes` no host — hoje

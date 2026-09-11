@@ -1,21 +1,26 @@
-# Ajustes pendentes da UI
+# Pendências
 
-Tudo do último lote foi feito (v0.5.3 / v0.5.4):
+Backlog curto do que ficou em aberto. O que é grande o bastante pra virar
+fase está no README; aqui é o resto.
 
-- Equalizer para quando pausa.
-- Mutar clicando no ícone de volume (`VolumeX` quando mudo).
-- Bolinha na barra de volume no hover.
-- Título/álbum do now-playing usa mais largura (`.np`/`.right` flex 1 1 0).
-- Modo compacto (v0.5.4 → v0.5.5): virou uma **faixa larga e baixa** —
-  capa à esquerda, título + progresso no meio, transporte à direita,
-  560×116. O piso de ~200px de altura vinha do `setResizable(false)`: no
-  GTK isso faz a janela ignorar as geometry hints e travar no tamanho
-  "natural" do conteúdo. Solução (v0.5.5): não mexer em resizable; fixar
-  o tamanho com `minSize == maxSize`. Agora a janela sai exatamente em
-  560×116 (verificado na VM com xfwm4).
+## Desktop
 
-## Depois (maior)
+- **Botão "check for updates".** Plugin updater do Tauri: par de chaves de
+  assinatura (o usuário gera), `latest.json` por release no CI, botão →
+  baixa e instala. ~1 h.
 
-- **Botão "check for updates" no topo.** Plugin updater do Tauri: par de
-  chaves de assinatura (usuário gera), `latest.json` por release no CI,
-  botão → baixa e instala. ~1h.
+## Android
+
+- **Build release assinado.** Hoje o APK da release é debug, assinado com a
+  chave de debug — instala, mas o Android avisa origem desconhecida. Um
+  release de verdade precisa de keystore em Secrets.
+- **Música sobrevivendo à desinstalação.** Hoje fica em armazenamento
+  privado do app (`getExternalFilesDir`), que o Android apaga junto. Mover
+  pra `MediaStore`/`/sdcard/Music` faria sobreviver — ao custo de permissão
+  de storage e de aparecer em outros players.
+
+## Sync
+
+Os limites conhecidos da v1 estão em [`docs/sync.md`](../docs/sync.md#o-que-ficou-pra-depois):
+sentido inverso (celular → PC), diff por `(size, mtime)`, sync incremental,
+resumo de hashes, escopo seletivo.
