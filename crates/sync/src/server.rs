@@ -13,7 +13,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -25,6 +25,14 @@ use crate::identity::Identity;
 use crate::merge;
 use crate::protocol::{CHUNK, Msg, TrackMeta};
 use crate::{Error, PROTO_VERSION, Result};
+
+/// Prazos de rede e teto de conexões. Sem eles, qualquer um na LAN abre
+/// conexões, não fala nada, e segura uma thread do host em cada uma.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// O caso de uso é um celular por vez; o teto existe para que a LAN não
+/// consiga esgotar as threads do host.
+const MAX_CONNS: usize = 4;
 
 /// O que o host decide sobre um device que acabou de se apresentar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,22 +86,33 @@ impl Server {
         let sd = shutdown.clone();
         let accept = thread::spawn(move || {
             let identity = Arc::new(identity);
+            let vivas = Arc::new(AtomicUsize::new(0));
             loop {
                 if sd.load(Ordering::Relaxed) {
                     break;
                 }
                 match listener.accept() {
                     Ok((stream, _peer)) => {
+                        if vivas.load(Ordering::SeqCst) >= MAX_CONNS {
+                            drop(stream);
+                            on_event(ServerEvent::ConnectionError(
+                                "conexões demais ao mesmo tempo; recusada".into(),
+                            ));
+                            continue;
+                        }
+                        vivas.fetch_add(1, Ordering::SeqCst);
                         let identity = identity.clone();
                         let db_path = db_path.clone();
                         let auth = auth.clone();
                         let ev = on_event.clone();
+                        let vivas = vivas.clone();
                         thread::spawn(move || {
                             if let Err(e) =
                                 serve_conn(stream, &identity, &db_path, auth.as_ref(), ev.as_ref())
                             {
                                 ev(ServerEvent::ConnectionError(e.to_string()));
                             }
+                            vivas.fetch_sub(1, Ordering::SeqCst);
                         });
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -157,12 +176,25 @@ where
 {
     stream.set_nonblocking(false)?;
     stream.set_nodelay(true)?;
+    // Cópia do descritor só para mexer nos prazos depois que o `Channel`
+    // consumir o stream. O handshake é máquina com máquina, daí o aperto; a
+    // sessão em si tem folga para uma transferência longa.
+    let ctl = stream.try_clone()?;
+    ctl.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
+    ctl.set_write_timeout(Some(HANDSHAKE_TIMEOUT))?;
 
     let (mut ch, peer_static) = Channel::responder(stream, identity)?;
     let peer_id = DeviceId(peer_static);
+    ctl.set_read_timeout(Some(IDLE_TIMEOUT))?;
+    ctl.set_write_timeout(Some(IDLE_TIMEOUT))?;
 
     let name = match ch.recv()? {
-        Msg::Hello { device_name, .. } => device_name,
+        Msg::Hello { proto, device_name } if proto == PROTO_VERSION => device_name,
+        Msg::Hello { proto, .. } => {
+            return Err(Error::Protocol(format!(
+                "o par fala a versão {proto} do protocolo, este host fala a {PROTO_VERSION}"
+            )));
+        }
         other => return Err(Error::Protocol(format!("esperava Hello, veio {other:?}"))),
     };
 

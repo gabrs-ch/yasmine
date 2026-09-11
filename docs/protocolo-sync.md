@@ -15,6 +15,11 @@ usuário faz, modelo de confiança, merge, garantias — está em
   descoberta: mDNS  _yasmine-sync._tcp.local.  discovery.rs   (opcional)
 ```
 
+Prazos: handshake 10 s dos dois lados; depois 120 s por leitura no host e 60 s
+no celular (180 s só na resposta ao primeiro `Hello`, que espera o humano do PC
+confirmar o pareamento). O host serve no máximo 4 conexões simultâneas. Sem
+isso, quem estiver na LAN abre conexões mudas e segura uma thread em cada uma.
+
 ## 1. Pareamento (QR)
 
 O host mostra um QR com:
@@ -58,6 +63,9 @@ com prefixo `u16` do tamanho cifrado. `MAX_FRAME` = 64 MiB (teto anti-DoS).
 | 7 | `Done` | celular→ | fim da sessão |
 | — | `Error { msg }` | ambos | aborta |
 
+O `proto` do `Hello` é **conferido** dos dois lados: versão diferente vira
+`Error` limpo em vez de erro de parse mais adiante.
+
 Ordem numa sessão: `Hello`×2 → `User` → `Have` → `Tracks` → (`NeedBlob` →
 `Blob…`)×N → `Done`. A camada do usuário vem **antes** do áudio: a biblioteca
 do celular já aparece povoada enquanto os arquivos chegam.
@@ -69,6 +77,12 @@ track_no?, year?, genre? }`. Propriedades de stream (sample rate etc.) e capa
 **não** viajam: saem do próprio arquivo quando o celular roda `scan` na pasta
 baixada. A capa é regenerada das tags pelo `ArtCache` — transferir imagem
 seria banda gasta pra reproduzir o que o receptor deriva de graça.
+
+Todo campo aqui é **entrada não confiável**: o pareamento autentica *quem* está
+do outro lado, não garante que o que ele diz seja honesto. `artist`, `album` e
+`title` passam por `sanitize`, e `ext` por `sanitize_ext` (token alfanumérico de
+até 8 caracteres, senão `bin`) — sem isso um `ext` com `../` escapa da pasta da
+biblioteca, já que ele é colado cru no nome do arquivo.
 
 ### `UserLayer`
 
@@ -86,6 +100,11 @@ continua. Ao receber o `last`, verifica o BLAKE3 do arquivo inteiro contra o
 `hash` pedido; se não bater, descarta e conta em `hash_mismatch`. Batendo,
 move pra `dest/<artista>/<álbum>/<NN título>.<ext>` (higienizado; sem tags,
 cai pra `dest/<hex>.<ext>`).
+
+Quem decide que o arquivo acabou é o `last` do host, então o celular corta a
+conexão se chegar mais byte do que o `size` anunciado — senão um host hostil
+escreve até encher o armazenamento. O destino também é conferido contra o
+`dest` antes de qualquer escrita.
 
 No fim: `player_core::scan(dest)` indexa tudo (tags, stream, capa) e
 `ensure_hashes` nas faixas novas — os itens de playlist, que apontam por

@@ -179,6 +179,14 @@ próprios arquivos — cache derivado, e o PC é dono deles. Não existe caminho
 de código onde o celular mande o PC apagar, mover ou alterar coisa alguma.
 Apagar uma faixa no celular, ou desinstalar o app, não alcança o PC.
 
+**O pareamento autentica quem fala, não o que ele fala.** O handshake prova
+que do outro lado está a chave do QR — não que ela seja honesta. Por isso o
+celular trata todo campo que vem do PC como entrada não confiável: a extensão
+e as tags são higienizadas antes de virarem caminho (senão um `ext` com `../`
+escreve fora da pasta da biblioteca), o destino é conferido contra a pasta, e
+a faixa é cortada se chegar mais byte do que o `size` anunciado. Vale tanto
+pro PC comprometido quanto pro que só tem um índice corrompido.
+
 **A v1 é unidirecional.** O celular faz merge do que veio do PC, mas não
 manda nada de volta. Uma playlist criada no celular fica no celular. O
 `UserLayer` e o `merge` já são simétricos — o que falta é o sentido inverso
@@ -192,7 +200,10 @@ de hashes: 50 000 faixas = 1,6 MB numa mensagem. Cabe, e é simples.
 álbum ou playlist.
 
 **Uma conexão por vez basta** pro caso de uso, mas cada conexão roda na
-própria thread — dois celulares ao mesmo tempo funcionam.
+própria thread — dois celulares ao mesmo tempo funcionam. O teto é 4
+simultâneas, e toda conexão tem prazo (10 s pro handshake, 120 s por leitura
+depois): sem isso alguém na LAN abre conexões mudas e segura uma thread do PC
+em cada uma.
 
 **Metadata editada dos dois lados** gera hashes diferentes, e as duas
 versões coexistem como faixas distintas. O sync reconcilia por conteúdo, não
